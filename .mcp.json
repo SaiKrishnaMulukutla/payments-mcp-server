@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "viewmax": {
-      "type": "http",
-      "url": "https://www.viewmax.io/api/mcp"
-    }
-  }
-}
