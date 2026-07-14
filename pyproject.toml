@@ -1,0 +1,25 @@
+[project]
+name = "payments-mcp"
+version = "0.1.0"
+description = "MCP gateway that safely exposes a double-entry payments ledger to an AI agent."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]>=1.20",
+    "httpx>=0.27",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "respx>=0.21"]
+evals = ["anthropic>=0.40"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/payments_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
