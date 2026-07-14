@@ -4,6 +4,12 @@
 ![MCP](https://img.shields.io/badge/MCP-FastMCP-6E56CF)
 ![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
+![Last commit](https://img.shields.io/github/last-commit/SaiKrishnaMulukutla/payments-mcp-server?logo=git&logoColor=white)
+<!-- PLACEHOLDERS — uncomment each once the backing thing exists:
+![CI](https://img.shields.io/github/actions/workflow/status/SaiKrishnaMulukutla/payments-mcp-server/<WORKFLOW_FILE.yml>?label=CI&logo=githubactions&logoColor=white)   add a .github/workflows/<name>.yml
+![License](https://img.shields.io/github/license/SaiKrishnaMulukutla/payments-mcp-server)   add a LICENSE file to the repo root
+-->
+
 
 An **MCP server** that safely exposes a correctness-critical, double-entry **payments ledger** to a
 probabilistic **AI agent**.
