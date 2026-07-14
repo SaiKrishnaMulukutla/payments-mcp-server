@@ -1,5 +1,10 @@
 # Payments Agent Gateway (MCP)
 
+![Python](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)
+![MCP](https://img.shields.io/badge/MCP-FastMCP-6E56CF)
+![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
+
 An **MCP server** that safely exposes a correctness-critical, double-entry **payments ledger** to a
 probabilistic **AI agent**.
 
