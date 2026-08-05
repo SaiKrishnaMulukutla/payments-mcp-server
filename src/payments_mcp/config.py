@@ -16,6 +16,12 @@ class Settings(BaseSettings):
     token: str | None = None  # bearer for the backend; NEVER exposed to the model
     request_timeout_s: float = 10.0
     merchant_id: str = "mcp-agent"  # gateway-owned; not agent-controlled
+    redis_url: str | None = None  # H2 shared op store + lock; unset => in-memory fallback
+    auth_secret: str | None = None  # H3 bearer-token verification; unset => stdio/demo, no auth
+    auth_issuer: str | None = None
+    auth_audience: str | None = None
+    mandate_secret: str | None = None  # H4 payment-mandate verification; unset => mandates disabled
+    mandate_issuer: str | None = None
 
 
 class AgentPrincipal(BaseModel):

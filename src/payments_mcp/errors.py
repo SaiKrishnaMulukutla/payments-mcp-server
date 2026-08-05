@@ -27,6 +27,9 @@ RATE_LIMITED = "RATE_LIMITED"
 BACKEND_TIMEOUT = "BACKEND_TIMEOUT"
 BACKEND_UNAVAILABLE = "BACKEND_UNAVAILABLE"
 INTERNAL_ERROR = "INTERNAL_ERROR"
+UNAUTHENTICATED = "UNAUTHENTICATED"
+MANDATE_INVALID = "MANDATE_INVALID"
+MANDATE_MISMATCH = "MANDATE_MISMATCH"
 
 # ---- gateway-owned suggested actions (deterministic; never from backend text) ----
 SUGGESTED_ACTIONS: dict[str, str] = {
@@ -43,6 +46,9 @@ SUGGESTED_ACTIONS: dict[str, str] = {
     BACKEND_TIMEOUT: "Transient timeout; a bounded retry is safe.",
     BACKEND_UNAVAILABLE: "Backend is temporarily unavailable; retry after a short delay.",
     INTERNAL_ERROR: "Unexpected gateway error; do not retry blindly.",
+    UNAUTHENTICATED: "Authentication required or token invalid; obtain a valid token, do not retry as-is.",
+    MANDATE_INVALID: "The payment mandate is missing, invalid, or expired; obtain a fresh mandate.",
+    MANDATE_MISMATCH: "The requested payment does not match its mandate; do not adjust and retry.",
 }
 
 
