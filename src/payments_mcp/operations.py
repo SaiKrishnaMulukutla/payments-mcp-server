@@ -13,8 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from . import errors as E
-from .backend.base import BackendError
+from .opstore import InMemoryOperationStore, OperationStore
 
 
 def _normalize(args: dict) -> dict:
@@ -33,22 +32,20 @@ def _derive_op(principal_id: str, tool: str, args: dict) -> str:
 
 
 class Operations:
-    """In-gateway registry mapping operation_id -> args_hash, to detect payload conflicts."""
+    """Maps a logical operation to a stable backend idempotency key via an OperationStore."""
 
-    def __init__(self) -> None:
-        self._seen: dict[str, str] = {}
+    def __init__(self, store: OperationStore | None = None) -> None:
+        self._store = store or InMemoryOperationStore()
 
-    def resolve(
+    async def resolve(
         self, principal_id: str, tool: str, args: dict, operation_id: str | None
     ) -> tuple[str, str]:
-        """Return (idempotency_key, operation_id). Raises IDEMPOTENCY_CONFLICT on payload reuse."""
+        """Return (idempotency_key, operation_id) and reserve the operation."""
         h = args_hash(principal_id, tool, args)
         op = operation_id or _derive_op(principal_id, tool, args)
-        prev = self._seen.get(op)
-        if prev is not None and prev != h:
-            raise BackendError(
-                E.IDEMPOTENCY_CONFLICT, "operation_id reused with a different payload"
-            )
-        self._seen[op] = h
+        await self._store.reserve(op, h)
         idem = "idem-" + hashlib.sha256(op.encode()).hexdigest()[:32]
         return idem, op
+
+    async def complete(self, op: str) -> None:
+        await self._store.release(op)

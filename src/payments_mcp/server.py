@@ -16,12 +16,39 @@ from pydantic import Field
 
 from .backend.demo_backend import DemoPaymentBackend
 from .backend.http_backend import HttpPaymentBackend
-from .config import Settings, demo_principal
+from .config import AgentPrincipal, Settings, demo_principal
 from .gateway import Gateway
+from .identity import PrincipalStore, TokenVerifier, resolve_principal
+from .mandate import MandateVerifier
+from .operations import Operations
+from .opstore import build_operation_store
 
 settings = Settings()
 _backend = HttpPaymentBackend(settings) if settings.backend == "http" else DemoPaymentBackend()
-gateway = Gateway(_backend, demo_principal(), merchant_id=settings.merchant_id)
+_ops = Operations(build_operation_store(settings.redis_url))
+_mandates = (
+    MandateVerifier(settings.mandate_secret, settings.mandate_issuer)
+    if settings.mandate_secret
+    else None
+)
+_principal = demo_principal()
+gateway = Gateway(
+    _backend, _principal, _ops, merchant_id=settings.merchant_id, mandate_verifier=_mandates
+)
+
+_verifier = (
+    TokenVerifier(settings.auth_secret, settings.auth_issuer, settings.auth_audience)
+    if settings.auth_secret
+    else None
+)
+_principals = PrincipalStore({_principal.principal_id: _principal})
+
+
+def principal_from_token(token: str | None) -> AgentPrincipal:
+    """Resolve the per-request principal from a bearer token; demo principal when auth is off."""
+    if _verifier is None or not token:
+        return _principal
+    return resolve_principal(token, _verifier, _principals)
 
 mcp = FastMCP("payments")
 
@@ -74,6 +101,10 @@ async def create_payment(
             "so the payment is created at most once."
         ),
     ] = None,
+    mandate: Annotated[
+        str | None,
+        Field(description="Signed mandate authorizing this exact payment (payer/payee/amount)."),
+    ] = None,
 ) -> dict:
     """Create a payment moving money from one account to another.
 
@@ -82,7 +113,7 @@ async def create_payment(
     an APPROVAL_REQUIRED response and are NOT executed.
     """
     return await gateway.create_payment(
-        payer_account_id, payee_account_id, amount_minor, currency, operation_id
+        payer_account_id, payee_account_id, amount_minor, currency, operation_id, mandate
     )
 
 
@@ -93,12 +124,15 @@ async def refund_payment(
     operation_id: Annotated[
         str | None, Field(description="Stable id; reuse when retrying so refunds happen at most once.")
     ] = None,
+    mandate: Annotated[
+        str | None, Field(description="Signed mandate authorizing this refund amount.")
+    ] = None,
 ) -> dict:
     """Refund (part of) a payment. More consequential than a payment — it reverses money — so it
     needs the refund scope. Idempotent by operation_id; amounts over the agent's limit return
     APPROVAL_REQUIRED and are NOT executed.
     """
-    return await gateway.refund_payment(payment_id, amount_minor, operation_id)
+    return await gateway.refund_payment(payment_id, amount_minor, operation_id, mandate)
 
 
 @mcp.tool(annotations=_READ_ONLY)

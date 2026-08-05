@@ -54,14 +54,22 @@ class HttpPaymentBackend:
             detail = str(r.json().get("detail", ""))
         except Exception:  # noqa: BLE001 - non-JSON body
             detail = r.text or ""
+        d = detail.lower()
         s = r.status_code
         if s == 404:
             raise BackendError(not_found, detail or "not found", http_status=s)
         if s == 409:
-            raise BackendError(E.IDEMPOTENCY_CONFLICT, detail or "idempotency conflict", http_status=s)
+            raise BackendError(
+                E.OPERATION_IN_PROGRESS,
+                detail or "operation already in progress",
+                retryable=True,
+                http_status=s,
+            )
         if s == 422:
-            if "fund" in detail.lower():
+            if "insufficient funds" in d:
                 raise BackendError(E.INSUFFICIENT_FUNDS, detail, http_status=s)
+            if "different request body" in d or ("idempotency" in d and "different" in d):
+                raise BackendError(E.IDEMPOTENCY_CONFLICT, detail, http_status=s)
             raise BackendError(E.INVALID_ARGUMENT, detail or "unprocessable", http_status=s)
         if s == 429:
             raise BackendError(E.RATE_LIMITED, "backend rate limited", retryable=True, http_status=s)
