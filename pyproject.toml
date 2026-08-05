@@ -11,7 +11,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "respx>=0.21"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "respx>=0.21", "fakeredis>=2", "pyjwt>=2"]
+redis = ["redis>=5", "certifi>=2024.0"]
+auth = ["pyjwt>=2"]
 evals = ["anthropic>=0.40"]
 
 [build-system]
