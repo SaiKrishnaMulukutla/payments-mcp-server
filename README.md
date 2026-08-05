@@ -58,6 +58,8 @@ idempotency, or postings.
 ## Safety model (maps to OWASP MCP controls)
 | Control | Here |
 |---|---|
+| Authenticated identity | OAuth 2.1 resource server: a verified bearer token resolves the per-request `AgentPrincipal` (`identity.py`) — the model never picks its own identity |
+| Deterministic authorization | a signed **payment mandate** pins payer/payee/amount; `mandate_id` anchors idempotency, so agent arg-drift/hallucination is rejected, not executed (`mandate.py`) |
 | Structured invocation | `policy.py` validates scope + account + amount before any backend call |
 | Human-in-the-loop | `APPROVAL_REQUIRED` for amounts over the principal's ceiling |
 | Context compartmentalization | least-privilege `AgentPrincipal` (scopes + account allow-list); creds never seen by the model |
@@ -72,7 +74,12 @@ idempotency, or postings.
 | `refund_payment` | `payments:refund` | destructive |
 | `check_ledger_integrity` | `payments:admin` | read-only, admin |
 
-Plus resources `payments://capabilities`, `payments://payment/{id}` and prompt `explain_payment`.
+`create_payment` / `refund_payment` also accept an optional signed `mandate` that authorizes the
+exact transaction. Plus resources `payments://capabilities`, `payments://payment/{id}` and prompt
+`explain_payment`.
+
+See [docs/PRODUCTION-HARDENING.md](docs/PRODUCTION-HARDENING.md) for the auth (H3) and mandate (H4)
+design and status.
 
 ## Quickstart
 ```bash
