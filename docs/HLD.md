@@ -83,7 +83,7 @@ agent operation_id ──(deterministic)──► backend Idempotency-Key ──
 Read → execute if authorized. Write → check scope, account access, amount ceiling; if it exceeds the principal's autonomous limit, return `APPROVAL_REQUIRED` (not executed). A model saying "I confirm" is **not** security — real approval must come from an external/client-side channel (deferred to M4). Refunds are marked more consequential than payments.
 
 ## 7. Agent-oriented error taxonomy
-Backend returns RFC-7807 `ProblemDetail`; the gateway **normalizes** to a stable, model-readable taxonomy: `INVALID_ARGUMENT, PERMISSION_DENIED, ACCOUNT_NOT_ALLOWED, PAYMENT_NOT_FOUND, INSUFFICIENT_FUNDS, IDEMPOTENCY_CONFLICT, OPERATION_IN_PROGRESS, APPROVAL_REQUIRED, RATE_LIMITED, BACKEND_TIMEOUT, BACKEND_UNAVAILABLE, INTERNAL_ERROR`. Each failure carries `retryable`, an optional gateway-owned `suggested_action`, and a `correlation_id`. **`suggested_action` is chosen from deterministic gateway mappings — never echoed from backend data** (prompt-injection guard).
+Backend returns RFC-7807 `ProblemDetail`; the gateway **normalizes** to a stable, model-readable taxonomy: `INVALID_ARGUMENT, PERMISSION_DENIED, ACCOUNT_NOT_ALLOWED, PAYMENT_NOT_FOUND, ACCOUNT_NOT_FOUND, INSUFFICIENT_FUNDS, IDEMPOTENCY_CONFLICT, OPERATION_IN_PROGRESS, APPROVAL_REQUIRED, RATE_LIMITED, BACKEND_TIMEOUT, BACKEND_UNAVAILABLE, INTERNAL_ERROR, UNAUTHENTICATED, MANDATE_INVALID, MANDATE_MISMATCH`. Each failure carries `retryable`, an optional gateway-owned `suggested_action`, and a `correlation_id`. **`suggested_action` is chosen from deterministic gateway mappings — never echoed from backend data** (prompt-injection guard).
 
 ## 8. Auditability (intent → execution)
 The ledger/outbox already record the financial truth; the gateway adds *"what did the agent request?"*:
@@ -110,3 +110,10 @@ A harness drives an LLM through 15–20 scenarios (normal / ambiguous / retry / 
 - **Full Spring service target** (not the live Edge `/api/pay`) — richer tools, but demoing the *real* path needs the local stack; `DemoPaymentBackend` covers dev/evals without it.
 - **operation_id accept-or-derive** — documented because it's the exact thing an interviewer probes.
 - **stdio first** — fastest to a working demo; HTTP is additive.
+
+## 13. Production hardening
+Built on top of the above:
+- **H1** — corrected backend→taxonomy mapping: 409 → `OPERATION_IN_PROGRESS` (retryable), 422 body-mismatch → `IDEMPOTENCY_CONFLICT`.
+- **H2** — operation identity backed by an `OperationStore` (`opstore.py`): in-memory by default, shared **Redis** across instances (conflict map + `SET NX EX` fail-fast lock). Correctness still lives in the backend; the store is a best-effort early guard.
+- **H3** — OAuth 2.1 resource server: a verified bearer token resolves the **per-request** `AgentPrincipal` (`identity.py`), replacing the hardwired demo principal. HTTP transport + RFC 9728 PRM wiring pending.
+- **H4** — signed **payment mandate** (`mandate.py`): trusted code (not the model) pins payer/payee/amount; the gateway verifies + enforces it and anchors idempotency to `mandate_id`, so agent arg-drift is rejected rather than executed.

@@ -78,9 +78,6 @@ idempotency, or postings.
 exact transaction. Plus resources `payments://capabilities`, `payments://payment/{id}` and prompt
 `explain_payment`.
 
-See [docs/PRODUCTION-HARDENING.md](docs/PRODUCTION-HARDENING.md) for the auth (H3) and mandate (H4)
-design and status.
-
 ## Quickstart
 ```bash
 python -m venv .venv && source .venv/bin/activate
