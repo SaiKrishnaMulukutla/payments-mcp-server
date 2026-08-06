@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "MCP gateway that safely exposes a double-entry payments ledger to an AI agent."
 requires-python = ">=3.10"
 dependencies = [
-    "mcp[cli]>=1.20",
+    "mcp[cli]==1.28.1",
     "httpx>=0.27",
     "pydantic>=2",
     "pydantic-settings>=2",
