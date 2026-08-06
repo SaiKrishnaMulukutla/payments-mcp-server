@@ -11,10 +11,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.24", "respx>=0.21", "fakeredis>=2", "pyjwt>=2"]
+dev = ["pytest>=8", "pytest-asyncio>=0.24", "respx>=0.21", "fakeredis>=2", "pyjwt>=2", "ruff>=0.6", "mypy>=1.11"]
 redis = ["redis>=5", "certifi>=2024.0"]
 auth = ["pyjwt>=2"]
-evals = ["anthropic>=0.40"]
+evals = ["anthropic>=0.40", "python-dotenv>=1"]
 
 [build-system]
 requires = ["hatchling"]
@@ -25,3 +25,19 @@ packages = ["src/payments_mcp"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/payments_mcp/console.py" = ["E501"]  # embedded HTML/CSS asset
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = true
+files = ["src/payments_mcp"]
