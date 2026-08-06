@@ -6,6 +6,8 @@ tokens, it never issues them.
 
 from __future__ import annotations
 
+from mcp.server.auth.provider import AccessToken
+
 from . import errors as E
 from .backend.base import BackendError
 from .config import AgentPrincipal
@@ -55,5 +57,42 @@ def resolve_principal(
     token_scopes = str(claims.get("scope", "")).split()
     if token_scopes:
         effective = [s for s in principal.scopes if s in token_scopes]
+        return principal.model_copy(update={"scopes": effective})
+    return principal
+
+
+class McpTokenVerifier:
+    """Adapts our JWT verification to the MCP SDK's async TokenVerifier protocol."""
+
+    def __init__(self, verifier: TokenVerifier, store: PrincipalStore) -> None:
+        self._verifier = verifier
+        self._store = store
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        try:
+            claims = self._verifier.verify(token)
+            principal = self._store.get(str(claims["sub"]))
+        except BackendError:
+            return None
+        token_scopes = str(claims.get("scope", "")).split()
+        granted = (
+            [s for s in principal.scopes if s in token_scopes]
+            if token_scopes
+            else list(principal.scopes)
+        )
+        return AccessToken(
+            token=token,
+            client_id=principal.principal_id,
+            scopes=granted,
+            expires_at=claims.get("exp"),
+            subject=principal.principal_id,
+            claims=dict(claims),
+        )
+
+
+def principal_from_access(access: AccessToken, store: PrincipalStore) -> AgentPrincipal:
+    principal = store.get(str(access.subject or access.client_id))
+    if access.scopes:
+        effective = [s for s in principal.scopes if s in access.scopes]
         return principal.model_copy(update={"scopes": effective})
     return principal

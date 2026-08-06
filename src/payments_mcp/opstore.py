@@ -56,12 +56,14 @@ class RedisOperationStore:
         else:
             from redis.asyncio import from_url
 
-            kwargs = {"decode_responses": True}
-            if url and url.startswith("rediss://"):
+            if url is None:
+                raise ValueError("redis url required when no client is provided")
+            if url.startswith("rediss://"):
                 import certifi
 
-                kwargs["ssl_ca_certs"] = certifi.where()
-            self._r = from_url(url, **kwargs)
+                self._r = from_url(url, decode_responses=True, ssl_ca_certs=certifi.where())
+            else:
+                self._r = from_url(url, decode_responses=True)
 
     async def reserve(self, op: str, args_hash: str) -> None:
         map_key = f"op:{op}"

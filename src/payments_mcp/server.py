@@ -1,24 +1,28 @@
-"""FastMCP server entrypoint.
+"""FastMCP entrypoint: tools/resources/prompts, optional OAuth2.1 auth, and approval routes.
 
-Thin: each tool delegates to the Gateway (validate -> authorize -> operation identity ->
-execute -> normalize -> audit). Rich parameter schemas via Annotated + Field so the agent sees
-descriptions/constraints; tool annotations (read-only / idempotent) so clients can reason about risk.
+Tools are thin: resolve the per-request principal, then delegate to the Gateway. Over stdio (dev)
+the principal is the demo principal; over authenticated HTTP it comes from the verified bearer token.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Annotated
+from typing import Annotated, Literal, cast
 
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import AnyHttpUrl, Field
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse
 
 from .backend.demo_backend import DemoPaymentBackend
 from .backend.http_backend import HttpPaymentBackend
 from .config import AgentPrincipal, Settings, demo_principal
 from .gateway import Gateway
-from .identity import PrincipalStore, TokenVerifier, resolve_principal
+from .identity import McpTokenVerifier, PrincipalStore, TokenVerifier, principal_from_access
+from .issuer import Issuer
 from .mandate import MandateVerifier
 from .operations import Operations
 from .opstore import build_operation_store
@@ -36,21 +40,35 @@ gateway = Gateway(
     _backend, _principal, _ops, merchant_id=settings.merchant_id, mandate_verifier=_mandates
 )
 
+_principals = PrincipalStore({_principal.principal_id: _principal})
 _verifier = (
     TokenVerifier(settings.auth_secret, settings.auth_issuer, settings.auth_audience)
     if settings.auth_secret
     else None
 )
-_principals = PrincipalStore({_principal.principal_id: _principal})
+_issuer = Issuer(settings.mandate_secret, settings.mandate_issuer) if settings.mandate_secret else None
+
+_auth_on = bool(_verifier and settings.auth_issuer and settings.auth_resource_url)
+if _auth_on:
+    assert _verifier and settings.auth_issuer and settings.auth_resource_url
+    mcp = FastMCP(
+        "payments",
+        host=settings.host,
+        port=settings.port,
+        token_verifier=McpTokenVerifier(_verifier, _principals),
+        auth=AuthSettings(
+            issuer_url=AnyHttpUrl(settings.auth_issuer),
+            resource_server_url=AnyHttpUrl(settings.auth_resource_url),
+        ),
+    )
+else:
+    mcp = FastMCP("payments", host=settings.host, port=settings.port)
 
 
-def principal_from_token(token: str | None) -> AgentPrincipal:
-    """Resolve the per-request principal from a bearer token; demo principal when auth is off."""
-    if _verifier is None or not token:
-        return _principal
-    return resolve_principal(token, _verifier, _principals)
+def _current_principal() -> AgentPrincipal:
+    access = get_access_token()
+    return principal_from_access(access, _principals) if access is not None else _principal
 
-mcp = FastMCP("payments")
 
 _READ_ONLY = ToolAnnotations(readOnlyHint=True)
 _IDEMPOTENT = ToolAnnotations(idempotentHint=True, destructiveHint=False)
@@ -68,7 +86,7 @@ async def get_payment(
     payment_id: Annotated[str, Field(description="The payment id to fetch.")],
 ) -> dict:
     """Fetch a single payment by id. Read-only. Returns the payment or a structured error."""
-    return await gateway.get_payment(payment_id)
+    return await gateway.get_payment(payment_id, principal=_current_principal())
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -76,7 +94,7 @@ async def get_balance(
     account_id: Annotated[str, Field(description="Account id the agent is allowed to view.")],
 ) -> dict:
     """Return the current balance (in minor units) of an allowed account."""
-    return await gateway.get_balance(account_id)
+    return await gateway.get_balance(account_id, principal=_current_principal())
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -85,7 +103,7 @@ async def get_account_ledger(
     limit: Annotated[int, Field(gt=0, le=100, description="Max postings (newest first).")] = 20,
 ) -> dict:
     """Return a bounded page of an account's most-recent postings (newest first)."""
-    return await gateway.get_account_ledger(account_id, limit)
+    return await gateway.get_account_ledger(account_id, limit, principal=_current_principal())
 
 
 @mcp.tool(annotations=_IDEMPOTENT)
@@ -113,7 +131,13 @@ async def create_payment(
     an APPROVAL_REQUIRED response and are NOT executed.
     """
     return await gateway.create_payment(
-        payer_account_id, payee_account_id, amount_minor, currency, operation_id, mandate
+        payer_account_id,
+        payee_account_id,
+        amount_minor,
+        currency,
+        operation_id,
+        mandate,
+        principal=_current_principal(),
     )
 
 
@@ -132,7 +156,9 @@ async def refund_payment(
     needs the refund scope. Idempotent by operation_id; amounts over the agent's limit return
     APPROVAL_REQUIRED and are NOT executed.
     """
-    return await gateway.refund_payment(payment_id, amount_minor, operation_id, mandate)
+    return await gateway.refund_payment(
+        payment_id, amount_minor, operation_id, mandate, principal=_current_principal()
+    )
 
 
 @mcp.tool(annotations=_READ_ONLY)
@@ -141,13 +167,13 @@ async def check_ledger_integrity() -> dict:
 
     Returns only the integrity summary — never raw account data.
     """
-    return await gateway.ledger_integrity()
+    return await gateway.ledger_integrity(principal=_current_principal())
 
 
 @mcp.resource("payments://capabilities")
 def capabilities() -> str:
     """What THIS agent principal may do — scopes, account allow-list, autonomous payment limit."""
-    p = gateway.principal
+    p = _current_principal()
     accounts = ", ".join(p.allowed_accounts) if p.allowed_accounts else "unrestricted (dev)"
     return (
         f"principal: {p.principal_id}\n"
@@ -160,7 +186,7 @@ def capabilities() -> str:
 @mcp.resource("payments://payment/{payment_id}")
 async def payment_resource(payment_id: str) -> str:
     """Bounded payment context for a given id (as JSON)."""
-    return json.dumps(await gateway.get_payment(payment_id))
+    return json.dumps(await gateway.get_payment(payment_id, principal=_current_principal()))
 
 
 @mcp.prompt()
@@ -173,9 +199,52 @@ def explain_payment(payment_id: str) -> str:
     )
 
 
+if _issuer is not None:
+    issuer = _issuer
+
+    async def _list_approvals(request: Request) -> JSONResponse:
+        return JSONResponse([r.model_dump() for r in issuer.pending()])
+
+    async def _create_approval(request: Request) -> JSONResponse:
+        d = await request.json()
+        req = issuer.request(
+            payer=d["payer"],
+            payee=d["payee"],
+            currency=d.get("currency", "INR"),
+            amount_minor=int(d["amount_minor"]),
+        )
+        return JSONResponse(req.model_dump(), status_code=201)
+
+    async def _approve(request: Request) -> JSONResponse:
+        try:
+            return JSONResponse({"mandate": issuer.approve(request.path_params["approval_id"])})
+        except KeyError:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+
+    async def _reject(request: Request) -> JSONResponse:
+        try:
+            issuer.reject(request.path_params["approval_id"])
+        except KeyError:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return JSONResponse({"status": "REJECTED"})
+
+    async def _console(request: Request) -> HTMLResponse:
+        from .console import APPROVALS_HTML
+
+        return HTMLResponse(APPROVALS_HTML)
+
+    mcp.custom_route("/approvals", methods=["GET"])(_list_approvals)
+    mcp.custom_route("/approvals", methods=["POST"])(_create_approval)
+    mcp.custom_route("/approvals/{approval_id}/approve", methods=["POST"])(_approve)
+    mcp.custom_route("/approvals/{approval_id}/reject", methods=["POST"])(_reject)
+    mcp.custom_route("/console", methods=["GET"])(_console)
+
+
 def main() -> None:
-    """Run the server over stdio (used by MCP clients: Inspector, Claude Desktop/Code)."""
-    mcp.run()
+    """Run the server. Transport from PAYMENTS_TRANSPORT: stdio (default) | streamable-http."""
+    mcp.run(transport=cast(Literal["stdio", "sse", "streamable-http"], settings.transport))
 
 
 if __name__ == "__main__":
