@@ -16,12 +16,15 @@ payments-mcp-server/
 │   ├── policy.py                 # capability checks, amount/currency, approval
 │   ├── operations.py             # operation_id -> idempotency-key (accept-or-derive)
 │   ├── opstore.py                # OperationStore: in-memory | Redis (H2)
-│   ├── identity.py               # OAuth2.1 token verify -> per-request principal (H3)
+│   ├── identity.py               # OAuth2.1 token verify + MCP adapter -> per-request principal (H3)
 │   ├── mandate.py                # signed payment-mandate verify/enforce (H4)
+│   ├── issuer.py                 # approval -> signed mandate (human-in-the-loop)
 │   ├── errors.py                 # backend ProblemDetail -> agent error taxonomy
 │   └── audit.py                  # audit record writer (stderr)
 ├── evals/{scenarios.py, runner.py}
-└── tests/ (test_m1_backend, test_m2_policy, test_m3_create, test_m4_m5, test_h1_http_errors, test_h2_opstore, test_h3_identity, test_h4_mandate)
+├── .github/workflows/ci.yml      # lint (ruff) + type (mypy) + test (pytest)
+├── Dockerfile
+└── tests/ (test_m1_backend, test_m2_policy, test_m3_create, test_m4_m5, test_h1_http_errors, test_h2_opstore, test_h3_identity, test_h4_mandate, test_a2_auth, test_a3_issuer)
 ```
 
 ## 2. Config + principal (`config.py`)
@@ -34,7 +37,10 @@ class Settings(BaseSettings):                  # env prefix PAYMENTS_
     merchant_id: str = "mcp-agent"
     redis_url: str | None = None               # H2: shared op store + lock; unset => in-memory
     auth_secret / auth_issuer / auth_audience  # H3: bearer-token verification (unset => no auth)
+    auth_resource_url: str | None = None       # H3: this server's URL (RFC 8707 resource indicator)
     mandate_secret / mandate_issuer            # H4: mandate verification (unset => mandates off)
+    transport: str = "stdio"                   # stdio | streamable-http
+    host: str = "127.0.0.1"; port: int = 8000  # streamable-http bind
 
 class AgentPrincipal(BaseModel):
     principal_id: str

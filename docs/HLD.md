@@ -99,8 +99,8 @@ arguments_hash, policy_decision, backend_request_id, backend_resource_id, result
 - Prompt `explain_payment` → explain a payment's lifecycle from status + ledger movement, without inventing facts absent from the backend.
 
 ## 10. Transports
-- **stdio** (M0–M6): gateway is a subprocess of the client (Claude Desktop/Code, MCP Inspector). Simplest.
-- **streamable HTTP** (M7, optional): remote transport — only if genuinely useful, not to tick a box.
+- **stdio** (default): gateway is a subprocess of the client (Claude Desktop/Code, MCP Inspector). Uses the demo principal; no auth.
+- **streamable HTTP** (`PAYMENTS_TRANSPORT=streamable-http`): remote transport. When auth is configured it runs as an OAuth 2.1 resource server — unauthenticated requests get `401` with a `WWW-Authenticate` pointer to the RFC 9728 Protected Resource Metadata, and each request's principal is resolved from the verified bearer token.
 
 ## 11. Evals (what makes this agentic-reliability, not an adapter)
 A harness drives an LLM through 15–20 scenarios (normal / ambiguous / retry / adversarial / authorization / risk / failure / idempotency / hallucination / loop) and measures: task-success, **unsafe-action rate**, unnecessary-tool-call rate, clarification rate, and **duplicate-financial-operation count (must be 0)**. The retry scenario (backend commits → response lost → agent retries same `operation_id` → exactly one payment) is the flagship test. *Note: evals need an LLM key + a small agent runner — the only part that isn't keyless.*
@@ -115,5 +115,7 @@ A harness drives an LLM through 15–20 scenarios (normal / ambiguous / retry / 
 Built on top of the above:
 - **H1** — corrected backend→taxonomy mapping: 409 → `OPERATION_IN_PROGRESS` (retryable), 422 body-mismatch → `IDEMPOTENCY_CONFLICT`.
 - **H2** — operation identity backed by an `OperationStore` (`opstore.py`): in-memory by default, shared **Redis** across instances (conflict map + `SET NX EX` fail-fast lock). Correctness still lives in the backend; the store is a best-effort early guard.
-- **H3** — OAuth 2.1 resource server: a verified bearer token resolves the **per-request** `AgentPrincipal` (`identity.py`), replacing the hardwired demo principal. HTTP transport + RFC 9728 PRM wiring pending.
+- **H3** — OAuth 2.1 resource server (`identity.py`): the streamable-HTTP transport validates the bearer token, serves RFC 9728 PRM (`401` + `WWW-Authenticate` when absent), and resolves the **per-request** `AgentPrincipal` from the token, replacing the hardwired demo principal.
 - **H4** — signed **payment mandate** (`mandate.py`): trusted code (not the model) pins payer/payee/amount; the gateway verifies + enforces it and anchors idempotency to `mandate_id`, so agent arg-drift is rejected rather than executed.
+- **Approval → mandate** (`issuer.py`): an `APPROVAL_REQUIRED` result closes into a signed mandate via a human step — `/approvals` HTTP routes (list / approve / reject) an OpenBlocks-style console drives; the issuer holds the signing key and mints the mandate only after approval.
+- **Ops:** ruff + mypy gate, GitHub Actions CI (lint/type/test), Dockerfile. LLM behavior evals include prompt-injection/jailbreak scenarios asserting no unsafe money movement.

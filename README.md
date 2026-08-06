@@ -5,8 +5,8 @@
 ![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
 ![Last commit](https://img.shields.io/github/last-commit/SaiKrishnaMulukutla/payments-mcp-server?logo=git&logoColor=white)
-<!-- PLACEHOLDERS — uncomment each once the backing thing exists:
-![CI](https://img.shields.io/github/actions/workflow/status/SaiKrishnaMulukutla/payments-mcp-server/<WORKFLOW_FILE.yml>?label=CI&logo=githubactions&logoColor=white)   add a .github/workflows/<name>.yml
+![CI](https://img.shields.io/github/actions/workflow/status/SaiKrishnaMulukutla/payments-mcp-server/ci.yml?label=CI&logo=githubactions&logoColor=white)
+<!-- PLACEHOLDER — uncomment once the backing thing exists:
 ![License](https://img.shields.io/github/license/SaiKrishnaMulukutla/payments-mcp-server)   add a LICENSE file to the repo root
 -->
 
@@ -89,11 +89,23 @@ mcp dev src/payments_mcp/server.py
 # or register with Claude Desktop
 mcp install src/payments_mcp/server.py
 
-# tests
-pytest -q
+# quality gates (also run in CI)
+ruff check src evals tests && mypy && pytest -q
 ```
 Defaults to `PAYMENTS_BACKEND=demo` (in-memory, no external services). Set `PAYMENTS_BACKEND=http`
 + `PAYMENTS_BASE_URL` to drive the real Spring Boot service.
+
+**Remote / authenticated (OAuth 2.1 resource server):**
+```bash
+PAYMENTS_TRANSPORT=streamable-http PAYMENTS_HOST=0.0.0.0 \
+  PAYMENTS_AUTH_SECRET=… PAYMENTS_AUTH_ISSUER=https://your-idp/ \
+  PAYMENTS_AUTH_RESOURCE_URL=http://localhost:8000 \
+  PAYMENTS_MANDATE_SECRET=… \
+  python -m payments_mcp.server
+```
+Unauthenticated calls get `401` + a `WWW-Authenticate` pointer to `/.well-known/oauth-protected-resource`
+(RFC 9728). With `PAYMENTS_MANDATE_SECRET` set, human approvals close into signed mandates via the
+`/approvals` routes (`GET` list · `POST` create · `POST /{id}/approve` → mandate · `POST /{id}/reject`).
 
 ## Demo (the money shot)
 Ask the agent: **“Pay 50 from acct-A to acct-B, then retry the exact same operation.”** →
@@ -102,9 +114,12 @@ Then **“pay from acct-Z”** → `ACCOUNT_NOT_ALLOWED`. The audit log shows in
 payment → (in http mode) ledger postings.
 
 ## Evals
-`python -m evals.runner` drives an LLM through behavior scenarios (normal / risk / authorization /
-hallucination / retry / adversarial) and asserts **duplicate-financial-operation count = 0**. Needs
-`ANTHROPIC_API_KEY` in `.env`; without it, the *deterministic* exactly-once proof still runs via
+`python -m evals.runner` drives a real LLM (Anthropic tool-use loop) through behavior scenarios —
+normal / risk / authorization / hallucination / retry / **adversarial (prompt-injection & jailbreak)** —
+against a fresh `DemoPaymentBackend` per scenario, and asserts machine-checkable outcomes:
+**duplicate-financial-operation count = 0** and **no unsafe money movement even when the model is
+instructed to override its limits**. Needs `ANTHROPIC_API_KEY` in `.env` (`pip install -e ".[evals]"`);
+without it the suite skips and the *deterministic* exactly-once proof still runs via
 `pytest tests/test_m3_create.py`.
 
 ## Layout
