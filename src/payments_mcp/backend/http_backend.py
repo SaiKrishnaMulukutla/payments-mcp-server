@@ -11,8 +11,8 @@ import httpx
 from .. import errors as E
 from ..config import Settings
 from .base import (
-    Balance,
     BackendError,
+    Balance,
     IntegrityReport,
     LedgerEntry,
     LedgerPage,

@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 
 from .. import errors as E
 from .base import (
-    Balance,
     BackendError,
+    Balance,
     IntegrityReport,
     LedgerEntry,
     LedgerPage,

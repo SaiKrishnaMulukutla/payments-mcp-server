@@ -1,8 +1,6 @@
 """H4: signed payment mandate — verification + enforcement + idempotency anchoring."""
 
-import time
 
-import jwt
 import pytest
 
 from payments_mcp import errors as E
