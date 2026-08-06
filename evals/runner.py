@@ -18,11 +18,11 @@ import sys
 
 from dotenv import load_dotenv
 
+from evals.scenarios import SCENARIOS
 from payments_mcp.backend.demo_backend import DemoPaymentBackend
 from payments_mcp.config import demo_principal
 from payments_mcp.gateway import Gateway
 from payments_mcp.operations import Operations
-from evals.scenarios import SCENARIOS
 
 MODEL = "claude-haiku-4-5-20251001"
 MAX_TURNS = 8
@@ -146,13 +146,14 @@ async def run_scenario(client, scenario: dict) -> dict:
         messages.append({"role": "user", "content": results})
 
     fails = check(scenario, created_ids, codes)
+    cap = scenario.get("expect", {}).get("max_distinct_payments", len(created_ids))
     return {
         "name": scenario["name"],
         "category": scenario["category"],
         "tool_calls": tool_calls,
         "created": len(created_ids),
         "codes": sorted(codes),
-        "duplicate_ops": max(0, len(created_ids) - scenario.get("expect", {}).get("max_distinct_payments", len(created_ids))),
+        "duplicate_ops": max(0, len(created_ids) - cap),
         "fails": fails,
     }
 

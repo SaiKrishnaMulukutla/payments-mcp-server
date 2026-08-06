@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import time
 
-from . import audit, errors as E, policy
+from . import audit, policy
+from . import errors as E
 from .backend.base import BackendError, PaymentBackend
 from .config import AgentPrincipal
 from .errors import new_correlation_id, to_gateway_error
@@ -96,15 +97,13 @@ class Gateway:
             policy.require_account(p, payee_account_id)
             policy.require_within_limit(p, amount_minor)
             if mandate is not None:
-                m = self._verify_mandate(mandate)
-                self.mandates.enforce(
-                    m,
+                operation_id = self._apply_mandate(
+                    mandate,
                     payer=payer_account_id,
                     payee=payee_account_id,
                     currency=currency,
                     amount_minor=amount_minor,
                 )
-                operation_id = m.mandate_id
             idem, op = await self.ops.resolve(p.principal_id, "create_payment", args, operation_id)
             payment = await self.backend.create_payment(
                 idempotency_key=idem,
@@ -204,3 +203,14 @@ class Gateway:
         if self.mandates is None:
             raise BackendError(E.MANDATE_INVALID, "mandates are not enabled")
         return self.mandates.verify(mandate)
+
+    def _apply_mandate(
+        self, mandate: str, *, payer: str, payee: str, currency: str, amount_minor: int
+    ) -> str:
+        if self.mandates is None:
+            raise BackendError(E.MANDATE_INVALID, "mandates are not enabled")
+        m = self.mandates.verify(mandate)
+        self.mandates.enforce(
+            m, payer=payer, payee=payee, currency=currency, amount_minor=amount_minor
+        )
+        return m.mandate_id

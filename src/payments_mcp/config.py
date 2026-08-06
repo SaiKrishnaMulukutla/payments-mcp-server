@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     auth_audience: str | None = None
     mandate_secret: str | None = None  # H4 payment-mandate verification; unset => mandates disabled
     mandate_issuer: str | None = None
+    transport: str = "stdio"  # stdio | streamable-http
+    host: str = "127.0.0.1"
+    port: int = 8000
+    auth_resource_url: str | None = None  # this server's URL (RFC 8707 resource indicator)
 
 
 class AgentPrincipal(BaseModel):
