@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     auth_audience: str | None = None
     mandate_secret: str | None = None  # H4 payment-mandate verification; unset => mandates disabled
     mandate_issuer: str | None = None
+    approval_database_url: str | None = None  # required whenever the approval service is enabled
+    approval_ttl_seconds: int = 900
     transport: str = "stdio"  # stdio | streamable-http
     host: str = "127.0.0.1"
     port: int = 8000
@@ -32,6 +34,7 @@ class AgentPrincipal(BaseModel):
     """Who the agent is allowed to be. Least-privilege: scopes + account allow-list + ceiling."""
 
     principal_id: str = "demo-agent"
+    tenant_id: str = "demo-tenant"
     allowed_accounts: list[str] = Field(default_factory=list)  # empty => unrestricted (dev only)
     scopes: list[str] = Field(default_factory=lambda: ["payments:read"])
     max_payment_amount_minor: int = 10_000  # autonomous ceiling (₹100 demo)
@@ -47,6 +50,7 @@ def demo_principal() -> AgentPrincipal:
     """A deliberately-scoped principal for the demo: reads + small payments on A/B, no refunds/admin."""
     return AgentPrincipal(
         principal_id="demo-agent",
+        tenant_id="demo-tenant",
         allowed_accounts=["acct-A", "acct-B"],
         scopes=["payments:read", "payments:create"],
         max_payment_amount_minor=10_000,
