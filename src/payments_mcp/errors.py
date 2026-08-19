@@ -1,7 +1,7 @@
-"""Agent-oriented error taxonomy + normalization.
+"""Domain errors + agent-oriented error taxonomy + normalization.
 
-Backend failures (BackendError, HTTP problems) are normalized into a stable, model-readable
-shape: {code, message, retryable, suggested_action, correlation_id}. `suggested_action` is
+Backend and domain failures (``BackendError``) are normalized into a stable, model-readable
+shape: {code, message, retryable, suggested_action, correlation_id}. ``suggested_action`` is
 chosen from a gateway-owned map — never echoed from backend data (prompt-injection guard).
 """
 
@@ -11,7 +11,23 @@ import uuid
 
 from pydantic import BaseModel
 
-from .backend.base import BackendError
+# ---- domain errors ----
+# ``BackendError`` lives here (not in the backend transport module) because it is the single
+# error type used across the domain: policy checks, mandate enforcement and backend failures.
+
+
+class BackendError(Exception):
+    """A domain or backend failure tagged with a gateway taxonomy code (see below)."""
+
+    def __init__(
+        self, code: str, message: str, *, retryable: bool = False, http_status: int | None = None
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+        self.http_status = http_status
+
 
 # ---- taxonomy ----
 INVALID_ARGUMENT = "INVALID_ARGUMENT"
@@ -46,7 +62,7 @@ SUGGESTED_ACTIONS: dict[str, str] = {
     BACKEND_TIMEOUT: "Transient timeout; a bounded retry is safe.",
     BACKEND_UNAVAILABLE: "Backend is temporarily unavailable; retry after a short delay.",
     INTERNAL_ERROR: "Unexpected gateway error; do not retry blindly.",
-    UNAUTHENTICATED: "Authentication required or token invalid; obtain a valid token, do not retry as-is.",
+    UNAUTHENTICATED: "Authentication required or invalid token; obtain a valid token, do not retry as-is.",
     MANDATE_INVALID: "The payment mandate is missing, invalid, or expired; obtain a fresh mandate.",
     MANDATE_MISMATCH: "The requested payment does not match its mandate; do not adjust and retry.",
 }
@@ -82,3 +98,28 @@ def to_gateway_error(exc: Exception, correlation_id: str) -> GatewayError:
         retry_after_seconds=5 if retryable else None,
         correlation_id=correlation_id,
     )
+
+
+__all__ = [
+    "ACCOUNT_NOT_ALLOWED",
+    "ACCOUNT_NOT_FOUND",
+    "APPROVAL_REQUIRED",
+    "BACKEND_TIMEOUT",
+    "BACKEND_UNAVAILABLE",
+    "BackendError",
+    "GatewayError",
+    "IDEMPOTENCY_CONFLICT",
+    "INSUFFICIENT_FUNDS",
+    "INTERNAL_ERROR",
+    "INVALID_ARGUMENT",
+    "MANDATE_INVALID",
+    "MANDATE_MISMATCH",
+    "OPERATION_IN_PROGRESS",
+    "PAYMENT_NOT_FOUND",
+    "PERMISSION_DENIED",
+    "RATE_LIMITED",
+    "SUGGESTED_ACTIONS",
+    "UNAUTHENTICATED",
+    "new_correlation_id",
+    "to_gateway_error",
+]
