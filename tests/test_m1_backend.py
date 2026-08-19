@@ -1,11 +1,10 @@
-"""M1 tests: the backend abstraction + error normalization (via DemoPaymentBackend)."""
+   """M1 tests: the backend abstraction + error normalization (via DemoPaymentBackend)."""
 
 import pytest
 
 from payments_mcp import errors as E
-from payments_mcp.backend.base import BackendError
-from payments_mcp.backend.demo_backend import DemoPaymentBackend
-from payments_mcp.errors import new_correlation_id, to_gateway_error
+from payments_mcp.backend import DemoPaymentBackend
+from payments_mcp.errors import BackendError, new_correlation_id, to_gateway_error
 
 
 async def test_create_and_get():
