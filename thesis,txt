@@ -1,0 +1,1241 @@
+You are helping me build a project called:
+
+"Bounded Financial Agent — Safe Agentic Money Movement with MCP and Cryptographically Signed Delegated Authority"
+
+PROJECT GOAL
+
+Build an Agentic AI + MCP financial system where an LLM can understand natural-language financial intent and autonomously orchestrate payments, while deterministic backend services enforce strict financial authorization.
+
+Core principle:
+
+"The LLM can exercise authority, but it cannot create, expand, or redefine authority."
+
+The LLM is NOT trusted for authorization.
+The deterministic backend is the authority.
+MCP is the capability/interface layer.
+
+==================================================
+LOCKED ARCHITECTURE
+==================================================
+
+User
+  ↓
+LLM / Agent
+  ↓
+MCP Mandate Proposal Tool
+  ↓
+Mandate Proposal
+  ↓
+Approval UI
+  ↓
+User reviews and approves/rejects
+  ↓
+Trusted Mandate Signer
+  ↓
+Signed Mandate
+  ↓
+LLM / Agent
+  ↓
+MCP downstream tools
+  ↓
+Deterministic Payment Gateway
+  ↓
+Mandate verification + policy enforcement
+  ↓
+Payment Executor
+  ↓
+Payment Provider
+  ↓
+Ledger
+
+IMPORTANT:
+
+The LLM can PROPOSE a mandate.
+
+The LLM cannot SIGN a mandate.
+
+The private signing key must never be available to the LLM or ordinary MCP tool execution.
+
+The user explicitly reviews the proposed authority in the UI before signing.
+
+==================================================
+PRIMARY USER SCENARIO
+==================================================
+
+User says:
+
+"Pay my monthly bills. If anything is more than ₹3,000, ask me and take my approval."
+
+The LLM interprets this request and creates a structured mandate proposal.
+
+The proposal is shown to the user.
+
+The user sees things such as:
+
+- Agent identity
+- Payer account
+- Allowed payees / payee rules
+- Currency
+- Per-transaction limit
+- Aggregate spending limit
+- Validity period
+- Allowed operations
+- Purpose/category
+- Automatic vs human-approval thresholds
+- Other applicable policies
+
+User approves.
+
+Trusted signing service creates the signed mandate.
+
+The agent then performs the downstream workflow.
+
+==================================================
+MANDATE MODEL — LOCKED DECISION
+==================================================
+
+We are using a MULTI-USE BOUNDED MANDATE.
+
+NOT a single-use mandate.
+
+A mandate represents delegated authority for a bounded period and scope.
+
+Example:
+
+Mandate:
+- payer = user account
+- allowed payees = electricity/internet/water
+- currency = INR
+- purpose = monthly bills
+- allowed operation = pay_bill
+- per transaction limit = ₹3,000
+- monthly aggregate limit = ₹10,000
+- valid for 30 days
+- amounts above ₹3,000 require human approval
+
+The mandate remains ACTIVE and can authorize multiple payment operations until:
+
+- revoked
+- expired
+- aggregate authority exhausted
+- another explicit termination condition occurs
+
+IMPORTANT TERMINOLOGY:
+
+Do NOT model the mandate itself as being consumed for every payment.
+
+Instead:
+
+Mandate = delegated authority
+
+Payment Operation = one exercise of that authority
+
+Each payment operation has its own lifecycle and idempotency identity.
+
+==================================================
+MANDATE STATUS MODEL — LOCKED
+==================================================
+
+Do NOT combine approval state and mandate lifecycle into one status field.
+
+Use two concepts:
+
+approval_status:
+- PENDING
+- APPROVED
+- REJECTED
+
+mandate_status:
+- ACTIVE
+- REVOKED
+- EXPIRED
+- EXHAUSTED
+
+Example:
+
+approval_status = APPROVED
+mandate_status = ACTIVE
+
+After user revokes it:
+
+approval_status = APPROVED
+mandate_status = REVOKED
+
+This preserves the fact that the user originally approved it.
+
+Payment authorization must check:
+
+mandate_status == ACTIVE
+
+server-side.
+
+The UI must never be the security boundary.
+
+==================================================
+EXHAUSTED
+==================================================
+
+EXHAUSTED means the mandate's aggregate spending authority has been fully used.
+
+Example:
+
+Monthly aggregate limit = ₹10,000
+
+Payments:
+₹3,000
+₹2,000
+₹5,000
+
+Total = ₹10,000
+
+mandate_status = EXHAUSTED
+
+Future payment operations must be rejected.
+
+If we later support recurring periods, a new period can receive a new allowance according to explicit policy.
+
+==================================================
+REVOCATION — LOCKED
+==================================================
+
+User must be able to revoke an active mandate from the same approval UI.
+
+Example:
+
+Active Mandate
+₹3,000/transaction
+₹10,000/month
+Valid until Sep 17
+
+[Revoke Authority]
+
+When revoked:
+
+mandate_status = REVOKED
+
+Revocation MUST be enforced server-side.
+
+The LLM cannot bypass it.
+
+A payment request with a revoked mandate must be rejected.
+
+For in-flight operations, explicitly distinguish:
+
+1. Not reserved → reject
+2. Reserved but not submitted → cancel/release if possible
+3. Already submitted → cannot assume revocation can undo it; reconcile
+4. Already completed → revocation affects future operations only
+
+==================================================
+MANDATE CONSTRAINTS
+==================================================
+
+The mandate should support multiple deterministic constraints:
+
+- payer/account
+- allowed payees
+- allowed operation
+- currency
+- purpose/category
+- per-transaction amount
+- aggregate amount
+- aggregate period
+- validity window
+- revocation
+- approval/escalation threshold
+- potentially frequency/time restrictions
+
+The LLM output is always UNTRUSTED INPUT.
+
+Deterministic services validate and enforce the proposal and signed mandate.
+
+==================================================
+CRYPTOGRAPHY
+==================================================
+
+Initial implementation may use HS256 for simplicity.
+
+However, the architecture must isolate signing and verification so we can later use asymmetric cryptography.
+
+Preferred production model:
+
+Private signing key
+    ↓
+Trusted signer
+    ↓
+Signed mandate
+    ↓
+Payment gateway
+    ↓
+Public key verifies signature
+
+The verifier must not possess the private signing key.
+
+Eventually we may explore verifiable credentials/delegation, but do not over-engineer the MVP.
+
+==================================================
+CRITICAL SECURITY INVARIANT
+==================================================
+
+NO VALID SIGNED MANDATE = NO MONEY MOVEMENT.
+
+Every money-moving operation must be authorized by deterministic backend code.
+
+The LLM must never be able to:
+
+- create authority
+- sign a mandate
+- modify a signed mandate
+- bypass policy
+- bypass account restrictions
+- bypass payee restrictions
+- bypass amount limits
+- bypass aggregate limits
+- bypass idempotency
+- bypass revocation
+- execute outside the mandate
+
+==================================================
+IMPORTANT EXAMPLE
+==================================================
+
+If the user says:
+
+"Maximum ₹3K"
+
+but the LLM interprets it as:
+
+₹30K
+
+the proposal must show ₹30K to the user.
+
+The user can reject it.
+
+Additionally, deterministic platform policy may impose hard maximums and reject unsafe proposals.
+
+LLM interpretation is never automatically trusted.
+
+Even if the LLM is completely compromised, the signed mandate and deterministic policy enforcement must prevent unauthorized money movement.
+
+==================================================
+PAYMENT OPERATION MODEL
+==================================================
+
+A mandate authorizes multiple operations.
+
+Example:
+
+MND-123
+  ├── OP-001 → Electricity ₹2,450 → completed
+  ├── OP-002 → Internet ₹999 → completed
+  ├── OP-003 → Water ₹750 → completed
+  └── OP-004 → Insurance ₹4,500 → requires human approval
+
+Each operation has:
+
+- operation_id
+- mandate_id
+- payer
+- payee
+- amount
+- currency
+- state
+- timestamps
+- provider transaction/resource ID
+- idempotency key
+
+==================================================
+PAYMENT STATE / FAILURE HANDLING
+==================================================
+
+DO NOT consume mandate authority before payment execution.
+
+Use:
+
+authorize
+  ↓
+reserve
+  ↓
+execute
+  ↓
+finalize
+
+For a payment operation:
+
+RESERVED / IN_FLIGHT
+    ├── SUCCESS → COMPLETED
+    ├── DEFINITE FAILURE → RELEASED / RETRYABLE
+    └── UNKNOWN → RECONCILIATION
+
+The UNKNOWN state is critical.
+
+Example:
+
+Gateway sends payment request.
+Provider actually executes payment.
+Network connection fails before gateway receives response.
+
+The gateway cannot assume failure.
+
+It must reconcile/query provider status before retrying.
+
+==================================================
+IDEMPOTENCY
+==================================================
+
+Every payment operation must have a stable operation_id.
+
+Repeated execution of the same operation must NOT create duplicate payments.
+
+Example:
+
+OP-123
+  ↓
+provider executes ₹2,450
+  ↓
+gateway crashes before response
+  ↓
+agent retries OP-123
+  ↓
+provider recognizes same idempotency key
+  ↓
+original result returned
+  ↓
+NO DUPLICATE PAYMENT
+
+Idempotency is a payment-operation property, not a mandate-consumption property.
+
+==================================================
+MCP
+==================================================
+
+Use FastMCP.
+
+Initial MCP tools:
+
+Mandate:
+- propose_mandate()
+- get_mandate()
+- revoke_mandate()
+
+Read:
+- list_bills()
+- get_bill()
+- get_balance()
+- get_payment_status()
+
+Write:
+- create_payment()
+
+The signing operation must NOT be exposed as an unrestricted LLM-callable tool.
+
+Potential future tools:
+- refund_payment()
+- cancel_payment()
+
+Treat financial write/destructive tools as high-risk capabilities.
+
+==================================================
+AGENT RESPONSIBILITY
+==================================================
+
+The LLM is responsible for:
+
+- natural-language understanding
+- intent extraction
+- planning
+- tool selection
+- multi-step orchestration
+- identifying when user approval is required
+- explaining results
+- asking clarification questions
+
+The LLM is NOT responsible for:
+
+- authorization
+- cryptographic signing
+- financial policy enforcement
+- determining whether a payment is legally/technically allowed
+- ledger truth
+- idempotency
+- final execution authority
+
+==================================================
+PROJECT THREAT MODEL
+==================================================
+
+Assume the LLM can be wrong or fully compromised.
+
+We must test:
+
+1. Prompt injection
+2. Amount escalation
+3. Payee substitution
+4. Wrong payer
+5. Wrong currency
+6. Forged mandate
+7. Modified mandate
+8. Expired mandate
+9. Revoked mandate
+10. Aggregate limit bypass
+11. Replayed payment
+12. Concurrent payments racing the aggregate limit
+13. Provider timeout
+14. Provider crash
+15. Unknown payment outcome
+16. Malicious tool output
+17. LLM attempting to create/sign authority
+
+The goal is NOT:
+
+"Make the LLM trustworthy."
+
+The goal is:
+
+"Make the financial system safe even when the LLM is not trustworthy."
+
+==================================================
+CURRENT PROJECT POSITION
+==================================================
+
+We have LOCKED:
+
+- bounded reusable mandates
+- human approval UI
+- cryptographic signing
+- deterministic server-side verification
+- separate approval_status and mandate_status
+- server-side revocation
+- per-transaction limits
+- aggregate limits
+- allowed payer/accounts
+- allowed payees
+- allowed operations
+- currency restrictions
+- expiry
+- operation-level idempotency
+- payment state machine
+- unknown-outcome reconciliation
+- human escalation for payments above mandate threshold
+- MCP as the agent capability layer
+
+==================================================
+YOUR TASK
+==================================================
+
+Based on this locked architecture:
+
+1. Review the design critically.
+2. Identify any remaining architectural/security flaws.
+3. Do NOT redesign the core locked decisions unless there is a strong technical reason.
+4. Clearly distinguish:
+   - MUST HAVE for MVP
+   - SHOULD HAVE
+   - FUTURE / ADVANCED
+5. Propose the exact implementation sequence.
+6. Define the core Pydantic models.
+7. Define the mandate state machine.
+8. Define the payment operation state machine.
+9. Define the MCP tool contracts.
+10. Define the database entities/tables.
+11. Define the approval/signing flow.
+12. Define the threat model and security tests.
+13. Define the failure/reconciliation strategy.
+14. Identify where the LLM is involved and where it MUST NOT be trusted.
+15. Recommend a clean Python/FastMCP project structure.
+
+Be brutally honest.
+
+If any part of the architecture is unnecessary, over-engineered, insecure, or conceptually confused, say so directly.
+
+The goal is to build a technically credible Agentic AI + MCP + FinTech systems project, not a toy demo.
+"""
+print("Prompt prepared.")
+print("Length:", len(content), "characters")
+print("Saved plan reference: /mnt/data/plan.md")
+ 񟿿
+
+
+ Great. Let's lock the **API contracts + state transitions** next. I’d keep the MVP deliberately small.
+
+# 1. Mandate Proposal
+
+### `POST /mandates/proposals`
+
+The LLM calls this through the MCP layer.
+
+```json
+{
+  "purpose": "monthly_bills",
+  "payer_account_id": "acc_123",
+  "allowed_payees": [
+    "electricity_456",
+    "internet_789"
+  ],
+  "allowed_operations": [
+    "pay_bill"
+  ],
+  "currency": "INR",
+  "per_transaction_limit_minor": 300000,
+  "aggregate_limit_minor": 1000000,
+  "aggregate_period": "MONTHLY",
+  "approval_required_above_minor": 300000,
+  "valid_from": "2026-08-18T00:00:00Z",
+  "expires_at": "2026-09-17T23:59:59Z"
+}
+```
+
+### Response
+
+```json
+{
+  "proposal_id": "prop_01J...",
+  "status": "PENDING",
+  "created_at": "2026-08-18T10:00:00Z",
+  "expires_at": "2026-09-17T23:59:59Z"
+}
+```
+
+**Important:** this proposal is untrusted LLM output.
+
+The server validates it before presenting it to the user.
+
+---
+
+# 2. Review Proposal
+
+### `POST /mandates/proposals/{proposal_id}/review`
+
+Request:
+
+```json
+{
+  "decision": "APPROVE"
+}
+```
+
+or:
+
+```json
+{
+  "decision": "REJECT"
+}
+```
+
+### Approval flow
+
+```text
+PENDING
+   │
+   ├── REJECT → REJECTED
+   │
+   └── APPROVE
+          │
+          ▼
+    Trusted Signer
+          │
+          ▼
+      Mandate
+          │
+          ▼
+       ACTIVE
+```
+
+### Response on approval
+
+```json
+{
+  "mandate_id": "mnd_01J...",
+  "proposal_id": "prop_01J...",
+  "status": "ACTIVE",
+  "approval_status": "APPROVED",
+  "expires_at": "2026-09-17T23:59:59Z"
+}
+```
+
+The response should **not expose the private signing key**.
+
+Whether the agent needs the raw signed token or just a `mandate_id` is an implementation decision we'll make when designing the internal trust boundary. The verifier must always retrieve/verify authoritative mandate data server-side.
+
+---
+
+# 3. Revoke Mandate
+
+### `POST /mandates/{mandate_id}/revoke`
+
+No body required for MVP.
+
+Response:
+
+```json
+{
+  "mandate_id": "mnd_01J...",
+  "status": "REVOKED",
+  "revoked_at": "2026-08-20T12:30:00Z"
+}
+```
+
+State transition:
+
+```text
+ACTIVE
+  │
+  ▼
+REVOKED
+```
+
+After this:
+
+```text
+POST /payments
+       ↓
+mandate.status != ACTIVE
+       ↓
+❌ REJECTED
+```
+
+---
+
+# 4. List Mandates
+
+### `GET /mandates`
+
+Response:
+
+```json
+{
+  "mandates": [
+    {
+      "mandate_id": "mnd_123",
+      "purpose": "monthly_bills",
+      "payer_account_id": "acc_123",
+      "status": "ACTIVE",
+      "approval_status": "APPROVED",
+      "per_transaction_limit_minor": 300000,
+      "aggregate_limit_minor": 1000000,
+      "aggregate_used_minor": 425000,
+      "currency": "INR",
+      "expires_at": "2026-09-17T23:59:59Z"
+    }
+  ]
+}
+```
+
+Notice that the UI can display:
+
+```text
+₹4,250 / ₹10,000 used
+```
+
+without the LLM having to calculate financial authority itself.
+
+---
+
+# 5. Create Payment ⭐
+
+### `POST /payments`
+
+This is the most important endpoint.
+
+Request:
+
+```json
+{
+  "mandate_id": "mnd_123",
+  "payer_account_id": "acc_123",
+  "payee_account_id": "electricity_456",
+  "amount_minor": 245000,
+  "currency": "INR",
+  "operation_id": "op_789"
+}
+```
+
+I'd eventually remove `operation_id` from the client-generated request and have the gateway generate it, or require a properly scoped idempotency key. But for the LLD, keep the concept explicit.
+
+### Server pipeline
+
+```text
+Request
+  │
+  ▼
+Authenticate principal
+  │
+  ▼
+Validate request
+  │
+  ▼
+Load mandate
+  │
+  ▼
+Verify signature
+  │
+  ▼
+mandate.status == ACTIVE?
+  │
+  ▼
+Payer matches?
+  │
+  ▼
+Payee allowed?
+  │
+  ▼
+Operation allowed?
+  │
+  ▼
+Currency matches?
+  │
+  ▼
+Amount ≤ per-tx limit?
+  │
+  ▼
+Aggregate limit available?
+  │
+  ▼
+Idempotency check
+  │
+  ▼
+Reserve allowance
+  │
+  ▼
+Execute payment
+```
+
+### Success
+
+```json
+{
+  "operation_id": "op_789",
+  "status": "COMPLETED",
+  "payment_id": "pay_456",
+  "amount_minor": 245000,
+  "currency": "INR"
+}
+```
+
+---
+
+# 6. Get Payment
+
+### `GET /payments/{operation_id}`
+
+Response:
+
+```json
+{
+  "operation_id": "op_789",
+  "mandate_id": "mnd_123",
+  "status": "COMPLETED",
+  "payer_account_id": "acc_123",
+  "payee_account_id": "electricity_456",
+  "amount_minor": 245000,
+  "currency": "INR",
+  "provider_transaction_id": "txn_456"
+}
+```
+
+Possible statuses:
+
+```text
+CREATED
+AUTHORIZED
+RESERVED
+PROCESSING
+COMPLETED
+FAILED
+UNKNOWN
+RECONCILING
+```
+
+---
+
+# 7. The Two State Machines
+
+This is important enough to lock separately.
+
+### Mandate
+
+```text
+             ┌──────────┐
+             │ PENDING  │
+             └────┬─────┘
+                  │
+        ┌─────────┴─────────┐
+        │                   │
+     APPROVE              REJECT
+        │                   │
+        ▼                   ▼
+     ACTIVE              REJECTED
+        │
+   ┌────┼───────────┐
+   │    │           │
+REVOKE EXPIRE    LIMIT USED
+   │    │           │
+   ▼    ▼           ▼
+REVOKED EXPIRED   EXHAUSTED
+```
+
+### Payment operation
+
+```text
+CREATED
+   │
+   ▼
+AUTHORIZED
+   │
+   ▼
+RESERVED
+   │
+   ▼
+PROCESSING
+   │
+ ┌─┼──────────────┐
+ ▼ ▼              ▼
+SUCCESS FAILURE  UNKNOWN
+ │       │          │
+ ▼       ▼          ▼
+COMPLETED FAILED  RECONCILING
+                      │
+                 ┌────┴────┐
+                 ▼         ▼
+             COMPLETED   FAILED
+```
+
+---
+
+# 8. One important correction to the previous design
+
+I **would not let the LLM choose arbitrary `operation_id`s**.
+
+The LLM can request:
+
+```text
+"Pay electricity bill X"
+```
+
+The deterministic payment service should establish the canonical operation identity.
+
+Otherwise the model can create confusing identities or deliberately manipulate idempotency semantics.
+
+Better:
+
+```text
+LLM
+ │
+ │ payment intent + mandate
+ ▼
+Payment Gateway
+ │
+ ├── validates
+ ├── creates operation_id
+ └── persists operation
+```
+
+Then the provider-facing idempotency key can be derived from that operation.
+
+---
+
+# 9. Above ₹3K
+
+Our original user instruction says:
+
+> "Anything above ₹3K, ask me."
+
+So:
+
+```text
+Mandate:
+automatic threshold = ₹3K
+```
+
+If the agent encounters:
+
+```text
+₹4,500
+```
+
+it should **not call `POST /payments` and hope it gets rejected**.
+
+Instead:
+
+```text
+LLM
+ ↓
+₹4,500 > automatic threshold
+ ↓
+Ask user
+```
+
+If the user approves, we need a separate **one-off authorization mechanism**.
+
+That's the next API design we need to settle, because I don't want to accidentally make the original reusable mandate silently expandable.
+
+---
+
+## So our next LLD decision should be:
+
+**How exactly does the ₹4,500 exception approval work?**
+
+I see two good options:
+
+**A. One-off signed authorization for that exact `operation_id`** — strongest security.
+
+**B. User temporarily modifies/extends the existing mandate** — simpler, but changes the standing authority.
+
+For this project, I'd lean strongly toward **A**.
+
+Yes. **We definitely need tables**, especially because this is a financial system with mandates, idempotency, approvals, and recovery.
+
+For the MVP, I'd keep it to **7 core tables**:
+
+| Table                 | Purpose                                             |
+| --------------------- | --------------------------------------------------- |
+| `mandate_proposals`   | Stores LLM-generated proposals awaiting user review |
+| `mandates`            | Stores approved/signed delegated authority          |
+| `mandate_usage`       | Tracks aggregate spending against a mandate         |
+| `payment_operations`  | Tracks every attempted payment and its state        |
+| `payments`            | Stores successful payment records                   |
+| `idempotency_records` | Prevents duplicate operations                       |
+| `audit_events`        | Immutable security/financial audit trail            |
+
+### 1. `mandate_proposals`
+
+```text
+proposal_id
+principal_id
+payer_account_id
+purpose
+allowed_payees
+allowed_operations
+currency
+per_transaction_limit
+aggregate_limit
+aggregate_period
+approval_threshold
+valid_from
+expires_at
+status
+created_at
+```
+
+Status:
+
+```text
+PENDING
+APPROVED
+REJECTED
+```
+
+---
+
+### 2. `mandates`
+
+This is the **authoritative authorization**.
+
+```text
+mandate_id
+proposal_id
+principal_id
+payer_account_id
+purpose
+allowed_payees
+allowed_operations
+currency
+per_transaction_limit
+aggregate_limit
+aggregate_period
+approval_threshold
+valid_from
+expires_at
+status
+signature
+signature_algorithm
+key_id
+created_at
+revoked_at
+```
+
+Status:
+
+```text
+ACTIVE
+REVOKED
+EXPIRED
+EXHAUSTED
+```
+
+---
+
+### 3. `mandate_usage`
+
+Tracks how much authority has been exercised.
+
+```text
+mandate_id
+period_start
+period_end
+amount_used
+operation_count
+updated_at
+```
+
+This table becomes **very important for concurrency**.
+
+Two payments arriving simultaneously must not both think:
+
+> "₹9K used, ₹2K remaining."
+
+and both spend ₹2K.
+
+We need an atomic reservation/update strategy.
+
+---
+
+### 4. `payment_operations` ⭐
+
+This is the core execution state.
+
+```text
+operation_id
+mandate_id
+principal_id
+payer_account_id
+payee_account_id
+amount_minor
+currency
+status
+idempotency_key
+provider_reference
+failure_code
+created_at
+updated_at
+completed_at
+```
+
+Status:
+
+```text
+CREATED
+AUTHORIZED
+RESERVED
+PROCESSING
+COMPLETED
+FAILED
+UNKNOWN
+RECONCILING
+```
+
+---
+
+### 5. `payments`
+
+Represents the actual successful financial transaction.
+
+```text
+payment_id
+operation_id
+payer_account_id
+payee_account_id
+amount_minor
+currency
+provider_reference
+created_at
+```
+
+This distinction is useful:
+
+```text
+Payment Operation
+       ↓
+attempt/process/reconcile
+       ↓
+Actual Payment
+```
+
+An operation can exist without a successful payment.
+
+---
+
+### 6. `idempotency_records`
+
+```text
+idempotency_key
+principal_id
+operation_id
+request_hash
+status
+response
+created_at
+expires_at
+```
+
+If the same request comes again:
+
+```text
+same idempotency_key
+       ↓
+return previous result
+       ↓
+DO NOT execute again
+```
+
+---
+
+### 7. `audit_events`
+
+For security and debugging:
+
+```text
+event_id
+correlation_id
+principal_id
+mandate_id
+operation_id
+event_type
+decision
+metadata
+created_at
+```
+
+Examples:
+
+```text
+MANDATE_PROPOSED
+MANDATE_APPROVED
+MANDATE_SIGNED
+MANDATE_REVOKED
+
+PAYMENT_AUTHORIZED
+PAYMENT_RESERVED
+PAYMENT_COMPLETED
+PAYMENT_FAILED
+PAYMENT_UNKNOWN
+PAYMENT_RECONCILED
+```
+
+### One thing I'd **not** create yet
+
+Don't create a separate `mandate_consumptions` table.
+
+Because we're using a **reusable bounded mandate**. `mandate_usage` + `payment_operations` gives us the necessary accounting.
+
+So the core relationship is:
+
+```text
+mandate_proposals
+       │
+       │ approved
+       ▼
+   mandates
+       │
+       ├──────────────┐
+       ▼              ▼
+mandate_usage   payment_operations
+                       │
+                       ▼
+                    payments
+
+Everything
+    │
+    ▼
+audit_events
+```

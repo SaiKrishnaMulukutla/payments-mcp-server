@@ -3,6 +3,8 @@ CREATE TABLE payment_approvals (
     approval_id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
     requester_principal_id TEXT NOT NULL,
+    mandate_id TEXT NOT NULL,
+    operation_id TEXT NOT NULL,
     action TEXT NOT NULL CHECK (action IN ('create_payment', 'refund_payment')),
     amount_minor BIGINT NOT NULL CHECK (amount_minor > 0),
     currency TEXT NOT NULL,
@@ -18,8 +20,8 @@ CREATE TABLE payment_approvals (
     updated_at TIMESTAMPTZ NOT NULL,
     updated_by_principal_id TEXT NOT NULL,
     consumed_at TIMESTAMPTZ,
-    mandate_id TEXT UNIQUE,
     version INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (tenant_id, operation_id),
     CHECK (
         (action = 'create_payment' AND payer IS NOT NULL AND payee IS NOT NULL AND payment_id IS NULL)
         OR (action = 'refund_payment' AND payment_id IS NOT NULL AND payer IS NULL AND payee IS NULL)
