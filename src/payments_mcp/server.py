@@ -1,7 +1,8 @@
-"""FastMCP entrypoint: tools/resources/prompts, optional OAuth2.1 auth, and approval routes.
+"""FastMCP entrypoint: tools/resources/prompts, optional OAuth2.1 auth.
 
-Tools are thin: resolve the per-request principal, then delegate to the Gateway. Over stdio (dev)
-the principal is the demo principal; over authenticated HTTP it comes from the verified bearer token.
+Tools are thin: resolve the per-request principal, then delegate to the PaymentGateway
+(``operations.py``) and MandateAuthority (``mandate.py``). Over stdio (dev) the principal is the
+demo principal; over authenticated HTTP it comes from the verified bearer token.
 """
 
 from __future__ import annotations
@@ -10,43 +11,146 @@ import json
 from typing import Annotated, Literal, cast
 
 from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import AnyHttpUrl, Field
-from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
 
-from .backend.demo_backend import DemoPaymentBackend
-from .backend.http_backend import HttpPaymentBackend
+from . import errors as E
+from .backend import build_backend
 from .config import AgentPrincipal, Settings, demo_principal
-from .gateway import Gateway
-from .identity import McpTokenVerifier, PrincipalStore, TokenVerifier, principal_from_access
-from .issuer import Issuer
-from .mandate import MandateVerifier
-from .operations import Operations
-from .opstore import build_operation_store
+from .errors import BackendError
+from .mandate import MandateAuthority, MandateVerifier
+from .operations import Operations, PaymentGateway, build_operation_store
+
+
+# ---------------------------------------------------------------------------
+# Identity (folded from the former identity.py)
+# ---------------------------------------------------------------------------
+
+
+class TokenVerifier:
+    """OAuth 2.1 resource-server identity: verify a bearer token, resolve the agent principal.
+
+    HS256 for now; swap in JWKS/asymmetric by changing only TokenVerifier. The gateway validates
+    tokens, it never issues them.
+    """
+
+    def __init__(
+        self, secret: str, issuer: str | None = None, audience: str | None = None
+    ) -> None:
+        self._secret = secret
+        self._issuer = issuer
+        self._audience = audience
+
+    def verify(self, token: str) -> dict:
+        import jwt
+
+        try:
+            return jwt.decode(
+                token,
+                self._secret,
+                algorithms=["HS256"],
+                issuer=self._issuer,
+                audience=self._audience,
+                options={"require": ["exp", "sub"], "verify_aud": self._audience is not None},
+            )
+        except Exception as e:  # noqa: BLE001
+            raise BackendError(E.UNAUTHENTICATED, "invalid or expired token") from e
+
+
+class PrincipalStore:
+    def __init__(self, principals: dict[str, AgentPrincipal]) -> None:
+        self._by_sub = principals
+
+    def get(self, sub: str) -> AgentPrincipal:
+        principal = self._by_sub.get(sub)
+        if principal is None:
+            raise BackendError(E.UNAUTHENTICATED, f"unknown principal: {sub}")
+        return principal
+
+
+def resolve_principal(
+    token: str, verifier: TokenVerifier, store: PrincipalStore
+) -> AgentPrincipal:
+    """Verify the token, load its principal, and narrow scopes to those the token also carries."""
+    claims = verifier.verify(token)
+    principal = store.get(str(claims["sub"]))
+    token_scopes = str(claims.get("scope", "")).split()
+    if token_scopes:
+        effective = [s for s in principal.scopes if s in token_scopes]
+        return principal.model_copy(update={"scopes": effective})
+    return principal
+
+
+class McpTokenVerifier:
+    """Adapts our JWT verification to the MCP SDK's async TokenVerifier protocol."""
+
+    def __init__(self, verifier: TokenVerifier, store: PrincipalStore) -> None:
+        self._verifier = verifier
+        self._store = store
+
+    async def verify_token(self, token: str) -> AccessToken | None:
+        try:
+            claims = self._verifier.verify(token)
+            principal = self._store.get(str(claims["sub"]))
+        except BackendError:
+            return None
+        token_scopes = str(claims.get("scope", "")).split()
+        granted = (
+            [s for s in principal.scopes if s in token_scopes]
+            if token_scopes
+            else list(principal.scopes)
+        )
+        return AccessToken(
+            token=token,
+            client_id=principal.principal_id,
+            scopes=granted,
+            expires_at=claims.get("exp"),
+            subject=principal.principal_id,
+            claims=dict(claims),
+        )
+
+
+def principal_from_access(access: AccessToken, store: PrincipalStore) -> AgentPrincipal:
+    principal = store.get(str(access.subject or access.client_id))
+    if access.scopes:
+        effective = [s for s in principal.scopes if s in access.scopes]
+        return principal.model_copy(update={"scopes": effective})
+    return principal
+
 
 settings = Settings()
-_backend = HttpPaymentBackend(settings) if settings.backend == "http" else DemoPaymentBackend()
+_backend = build_backend(settings)
 _ops = Operations(build_operation_store(settings.redis_url))
 _mandates = (
     MandateVerifier(settings.mandate_secret, settings.mandate_issuer)
     if settings.mandate_secret
     else None
 )
+_authority = (
+    MandateAuthority(settings.mandate_secret, settings.mandate_issuer)
+    if settings.mandate_secret
+    else None
+)
 _principal = demo_principal()
-gateway = Gateway(
-    _backend, _principal, _ops, merchant_id=settings.merchant_id, mandate_verifier=_mandates
+gateway = PaymentGateway(
+    _backend,
+    _principal,
+    _ops,
+    merchant_id=settings.merchant_id,
+    mandate_verifier=_mandates,
+    mandate_authority=_authority,
 )
 
+# ---- identity (folded from the former identity.py) ----
 _principals = PrincipalStore({_principal.principal_id: _principal})
 _verifier = (
     TokenVerifier(settings.auth_secret, settings.auth_issuer, settings.auth_audience)
     if settings.auth_secret
     else None
 )
-_issuer = Issuer(settings.mandate_secret, settings.mandate_issuer) if settings.mandate_secret else None
 
 _auth_on = bool(_verifier and settings.auth_issuer and settings.auth_resource_url)
 if _auth_on:
@@ -197,49 +301,6 @@ def explain_payment(payment_id: str) -> str:
         "(hold -> authorize -> settle/reverse) in plain language. State only facts returned by "
         "the tools; do not invent any details the backend did not provide."
     )
-
-
-if _issuer is not None:
-    issuer = _issuer
-
-    async def _list_approvals(request: Request) -> JSONResponse:
-        return JSONResponse([r.model_dump() for r in issuer.pending()])
-
-    async def _create_approval(request: Request) -> JSONResponse:
-        d = await request.json()
-        req = issuer.request(
-            payer=d["payer"],
-            payee=d["payee"],
-            currency=d.get("currency", "INR"),
-            amount_minor=int(d["amount_minor"]),
-        )
-        return JSONResponse(req.model_dump(), status_code=201)
-
-    async def _approve(request: Request) -> JSONResponse:
-        try:
-            return JSONResponse({"mandate": issuer.approve(request.path_params["approval_id"])})
-        except KeyError:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        except ValueError as e:
-            return JSONResponse({"error": str(e)}, status_code=409)
-
-    async def _reject(request: Request) -> JSONResponse:
-        try:
-            issuer.reject(request.path_params["approval_id"])
-        except KeyError:
-            return JSONResponse({"error": "not found"}, status_code=404)
-        return JSONResponse({"status": "REJECTED"})
-
-    async def _console(request: Request) -> HTMLResponse:
-        from .console import APPROVALS_HTML
-
-        return HTMLResponse(APPROVALS_HTML)
-
-    mcp.custom_route("/approvals", methods=["GET"])(_list_approvals)
-    mcp.custom_route("/approvals", methods=["POST"])(_create_approval)
-    mcp.custom_route("/approvals/{approval_id}/approve", methods=["POST"])(_approve)
-    mcp.custom_route("/approvals/{approval_id}/reject", methods=["POST"])(_reject)
-    mcp.custom_route("/console", methods=["GET"])(_console)
 
 
 def main() -> None:
