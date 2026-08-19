@@ -4,8 +4,8 @@ import pytest
 
 from payments_mcp import errors as E
 from payments_mcp import policy
-from payments_mcp.backend.base import BackendError
 from payments_mcp.config import AgentPrincipal
+from payments_mcp.errors import BackendError
 
 
 def test_require_scope_denies_missing():

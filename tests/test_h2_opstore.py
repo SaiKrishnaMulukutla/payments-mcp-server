@@ -8,8 +8,8 @@ import fakeredis.aioredis
 import pytest
 
 from payments_mcp import errors as E
-from payments_mcp.backend.base import BackendError
-from payments_mcp.opstore import (
+from payments_mcp.errors import BackendError
+from payments_mcp.operations import (
     InMemoryOperationStore,
     RedisOperationStore,
     build_operation_store,

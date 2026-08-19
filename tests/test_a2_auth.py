@@ -6,7 +6,7 @@ import jwt
 from mcp.server.auth.provider import AccessToken
 
 from payments_mcp.config import AgentPrincipal
-from payments_mcp.identity import (
+from payments_mcp.server import (
     McpTokenVerifier,
     PrincipalStore,
     TokenVerifier,

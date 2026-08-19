@@ -10,10 +10,9 @@ import pytest
 import respx
 
 from payments_mcp import errors as E
-from payments_mcp.backend.base import BackendError
-from payments_mcp.backend.http_backend import HttpPaymentBackend
+from payments_mcp.backend import HttpPaymentBackend
 from payments_mcp.config import Settings
-from payments_mcp.errors import new_correlation_id, to_gateway_error
+from payments_mcp.errors import BackendError, new_correlation_id, to_gateway_error
 
 BASE = "http://backend:8080"
 
@@ -105,3 +104,5 @@ async def test_5xx_and_timeout_are_retryable():
         await _create(b)
     assert ei.value.code == E.BACKEND_TIMEOUT and ei.value.retryable is True
     await b.aclose()
+</｜DSML｜parameter>
+</write_to_file>

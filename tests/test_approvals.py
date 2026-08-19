@@ -52,6 +52,8 @@ def test_payment_approval_records_human_approver_and_consumes_once():
     request = service.request_payment(
         tenant_id="tenant-a",
         requester_principal_id="agent-a",
+        mandate_id="mnd-a",
+        operation_id="op-a",
         payer="acct-A",
         payee="acct-B",
         currency="INR",
@@ -59,14 +61,14 @@ def test_payment_approval_records_human_approver_and_consumes_once():
     )
 
     approved = service.approve(request.approval_id, approver_principal_id="human-a")
-    consumed = service.consume(request.approval_id, mandate_id="mandate-a")
+    consumed = service.consume(request.approval_id)
 
     assert approved.status == ApprovalStatus.APPROVED
     assert approved.decision == ApprovalDecision.APPROVED
     assert approved.decided_by_principal_id == "human-a"
     assert consumed.status == ApprovalStatus.CONSUMED
     with pytest.raises(ValueError, match="CONSUMED"):
-        service.consume(request.approval_id, mandate_id="mandate-b")
+        service.consume(request.approval_id)
 
 
 def test_refund_approval_is_bound_to_one_payment():
@@ -74,6 +76,8 @@ def test_refund_approval_is_bound_to_one_payment():
     request = service.request_refund(
         tenant_id="tenant-a",
         requester_principal_id="agent-a",
+        mandate_id="mnd-a",
+        operation_id="op-r",
         payment_id="pay-1",
         currency="INR",
         amount_minor=500,
@@ -87,10 +91,12 @@ def test_refund_approval_is_bound_to_one_payment():
 def test_expired_pending_approval_cannot_be_approved():
     repository = FakeApprovalRepository()
     expired = ApprovalRequest(
-        approval_id="appr-expired",
-        tenant_id="tenant-a",
-        requester_principal_id="agent-a",
-        action=ApprovalAction.CREATE_PAYMENT,
+            approval_id="appr-expired",
+            tenant_id="tenant-a",
+            requester_principal_id="agent-a",
+            mandate_id="mnd-a",
+            operation_id="op-expired",
+            action=ApprovalAction.CREATE_PAYMENT,
         payer="acct-A",
         payee="acct-B",
         currency="INR",
@@ -111,6 +117,8 @@ def test_action_binding_rejects_a_refund_without_payment_id():
             approval_id="appr-invalid",
             tenant_id="tenant-a",
             requester_principal_id="agent-a",
+            mandate_id="mnd-a",
+            operation_id="op-invalid",
             action=ApprovalAction.REFUND_PAYMENT,
             currency="INR",
             amount_minor=100,

@@ -6,11 +6,11 @@ import jwt
 import pytest
 
 from payments_mcp import errors as E
-from payments_mcp.backend.base import BackendError
-from payments_mcp.backend.demo_backend import DemoPaymentBackend
+from payments_mcp.backend import DemoPaymentBackend
 from payments_mcp.config import AgentPrincipal
-from payments_mcp.gateway import Gateway
-from payments_mcp.identity import PrincipalStore, TokenVerifier, resolve_principal
+from payments_mcp.errors import BackendError
+from payments_mcp.operations import Gateway
+from payments_mcp.server import PrincipalStore, TokenVerifier, resolve_principal
 
 SECRET = "unit-test-signing-secret-0123456789ab"
 ISS = "https://issuer.test"
