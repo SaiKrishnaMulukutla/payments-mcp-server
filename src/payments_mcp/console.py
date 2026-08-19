@@ -1,83 +1,167 @@
-"""Static approvals console (served same-origin at /console) for the human-in-the-loop mandate flow."""
+"""Human decision console (CLI).
 
-APPROVALS_HTML = """<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Payments — Approvals</title>
-<style>
-  body { font: 15px/1.5 system-ui, sans-serif; max-width: 820px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
-  h1 { font-size: 1.3rem; } h2 { font-size: 1rem; margin-top: 2rem; }
-  table { width: 100%; border-collapse: collapse; margin-top: .5rem; }
-  th, td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid #eee; }
-  button { cursor: pointer; border: 1px solid #ccc; border-radius: 6px; padding: .35rem .7rem; background: #fff; }
-  button.approve { border-color: #1a7f37; color: #1a7f37; } button.reject { border-color: #b42318; color: #b42318; }
-  form { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .5rem; }
-  input { padding: .4rem; border: 1px solid #ccc; border-radius: 6px; }
-  .mandate { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; background: #f6f8fa; padding: .6rem; border-radius: 6px; margin-top: .5rem; }
-  .empty { color: #777; }
-</style>
-</head>
-<body>
-<h1>Payments — Approval console</h1>
-<p>Human-in-the-loop: approve a pending payment to mint a signed mandate the agent can then execute.</p>
+Presents pending proposals and active mandates to a human; relays the human's choice
+(APPROVE / REJECT / REVOKE) to :class:`payments_mcp.mandate.MandateAuthority`.
 
-<h2>New approval request</h2>
-<form id="new">
-  <input name="payer" placeholder="payer (acct-A)" value="acct-A" required>
-  <input name="payee" placeholder="payee (acct-B)" value="acct-B" required>
-  <input name="amount_minor" type="number" min="1" placeholder="amount (minor)" value="5000" required>
-  <input name="currency" placeholder="INR" value="INR" required>
-  <button type="submit">Create</button>
-</form>
+This module NEVER decides whether something is authorized — it only says "the human selected
+APPROVE" and lets ``mandate.py`` perform the actual state transition and signing logic.
 
-<h2>Pending</h2>
-<table><thead><tr><th>id</th><th>payer</th><th>payee</th><th>amount</th><th>cur</th><th></th></tr></thead>
-<tbody id="rows"><tr><td class="empty" colspan="6">loading…</td></tr></tbody></table>
-<div id="mandate"></div>
+Run with::
 
-<script>
-async function load() {
-  const rows = document.getElementById('rows');
-  const res = await fetch('/approvals');
-  const items = await res.json();
-  if (!items.length) { rows.innerHTML = '<tr><td class="empty" colspan="6">no pending approvals</td></tr>'; return; }
-  rows.innerHTML = '';
-  for (const a of items) {
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${a.approval_id}</td><td>${a.payer}</td><td>${a.payee}</td>` +
-      `<td>${a.amount_minor}</td><td>${a.currency}</td>` +
-      `<td><button class="approve" data-id="${a.approval_id}">Approve</button> ` +
-      `<button class="reject" data-id="${a.approval_id}">Reject</button></td>`;
-    rows.appendChild(tr);
-  }
-}
-async function approve(id) {
-  const res = await fetch(`/approvals/${id}/approve`, { method: 'POST' });
-  const out = await res.json();
-  const box = document.getElementById('mandate');
-  box.innerHTML = res.ok
-    ? `<p>Approved <b>${id}</b> — signed mandate:</p><div class="mandate">${out.mandate}</div>`
-    : `<p style="color:#b42318">Error: ${out.error || res.status}</p>`;
-  load();
-}
-async function reject(id) { await fetch(`/approvals/${id}/reject`, { method: 'POST' }); load(); }
-document.getElementById('rows').addEventListener('click', e => {
-  const id = e.target.dataset.id; if (!id) return;
-  (e.target.classList.contains('approve') ? approve : reject)(id);
-});
-document.getElementById('new').addEventListener('submit', async e => {
-  e.preventDefault();
-  const f = new FormData(e.target);
-  await fetch('/approvals', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ payer: f.get('payer'), payee: f.get('payee'),
-      amount_minor: Number(f.get('amount_minor')), currency: f.get('currency') }),
-  });
-  load();
-});
-load();
-</script>
-</body>
-</html>
+    python -m payments_mcp.console
 """
+
+from __future__ import annotations
+
+import sys
+from datetime import datetime, timezone
+
+from .mandate import MandateAuthority
+from .models import MandateOperation, MandateTerms
+
+
+def _fmt_minor(amount_minor: int) -> str:
+    return f"₹{amount_minor / 100:,.2f}"
+
+
+def _fmt_currency(currency: str) -> str:
+    return "INR" if currency == "INR" else currency
+
+
+def _fmt_date(dt: datetime) -> str:
+    return dt.strftime("%b %d")
+
+
+def _print_proposal(proposal) -> None:
+    terms = proposal.terms
+    print("Pending Mandate")
+    print("────────────────────────")
+    print(f"Payer:       {terms.payer_account_id}")
+    print(f"Payees:      {', '.join(terms.allowed_payee_ids)}")
+    print(f"Currency:    {_fmt_currency(terms.currency)}")
+    print("")
+    print(f"Per payment: {_fmt_minor(terms.per_transaction_limit_minor)}")
+    print(f"Monthly:     {_fmt_minor(terms.aggregate_limit_minor)}")
+    print(f"Valid until: {_fmt_date(terms.expires_at)}")
+    print("")
+    print("[ A ] Approve")
+    print("[ R ] Reject")
+
+
+def _print_active(mandate) -> None:
+    terms = mandate.terms
+    print("Mandate ACTIVE")
+    print("────────────────────────")
+    print(f"ID:          {mandate.mandate_id}")
+    print(f"Payer:       {terms.payer_account_id}")
+    print(f"Payees:      {', '.join(terms.allowed_payee_ids)}")
+    print(f"Currency:    {_fmt_currency(terms.currency)}")
+    print(f"Per payment: {_fmt_minor(terms.per_transaction_limit_minor)}")
+    print(f"Monthly:     {_fmt_minor(terms.aggregate_limit_minor)}")
+    print(f"Valid until: {_fmt_date(terms.expires_at)}")
+    print("")
+    print("[ R ] Revoke")
+    print("[ B ] Back")
+
+
+def _print_revoked() -> None:
+    print("Mandate REVOKED ✓")
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Interactive mandate console loop."""
+    argv = argv if argv is not None else sys.argv[1:]
+    secret = "console-dev-secret-0123456789ab"
+    authority = MandateAuthority(secret)
+
+    # Seed a demo proposal so the CLI has something to show immediately.
+    if "--no-seed" not in argv:
+        now = datetime.now(timezone.utc)
+        authority.propose(
+            tenant_id="demo-tenant",
+            requester_principal_id="demo-agent",
+            terms=MandateTerms(
+                payer_account_id="acct-A",
+                allowed_payee_ids=["acct-B"],
+                allowed_operations=[MandateOperation.PAY_BILL],
+                currency="INR",
+                purpose="Electricity",
+                per_transaction_limit_minor=300_00,
+                aggregate_limit_minor=10_00_00,
+                aggregate_period="MONTHLY",
+                approval_required_above_minor=0,
+                valid_from=now,
+                expires_at=now.replace(year=now.year + 1),
+            ),
+        )
+
+    while True:
+        print("")
+        print("=== Mandate Console ===")
+        print("")
+        print("1. Pending proposals")
+        print("2. Active mandates")
+        print("3. Revoke mandate")
+        print("4. Exit")
+        print("")
+        choice = input("> ").strip()
+        if choice == "1":
+            pending = authority.pending()
+            if not pending:
+                print("No pending proposals.")
+                continue
+            for i, proposal in enumerate(pending, start=1):
+                print(f"\n[{i}]")
+                _print_proposal(proposal)
+                action = input("Approve (A) / Reject (R) / Skip (Enter): ").strip().upper()
+                if action == "A":
+                    try:
+                        mandate = authority.approve_proposal(
+                            proposal.proposal_id, approver_principal_id="console-human"
+                        )
+                        print(f"\nMandate issued: {mandate.mandate_id}")
+                    except (KeyError, ValueError) as e:
+                        print(f"Error: {e}")
+                        return 1
+                elif action == "R":
+                    try:
+                        authority.reject_proposal(
+                            proposal.proposal_id, approver_principal_id="console-human"
+                        )
+                        print("Proposal REJECTED.")
+                    except (KeyError, ValueError) as e:
+                        print(f"Error: {e}")
+                        continue
+        elif choice == "2":
+            active = authority.active()
+            if not active:
+                print("No active mandates.")
+                continue
+            for mandate in active:
+                print("")
+                _print_active(mandate)
+        elif choice == "3":
+            active = authority.active()
+            if not active:
+                print("No active mandates to revoke.")
+                continue
+            print("Active mandates:")
+            for i, mandate in enumerate(active, start=1):
+                print(f"{i}. {mandate.mandate_id} — {mandate.terms.purpose}")
+            pick = input("Choose mandate to revoke (number): ").strip()
+            try:
+                chosen = active[int(pick) - 1]
+            except (ValueError, IndexError):
+                print("Invalid selection.")
+                continue
+            authority.revoke_mandate(chosen.mandate_id, revoker_principal_id="console-human")
+            _print_revoked()
+        elif choice == "4":
+            print("Goodbye.")
+            return 0
+        else:
+            print("Unknown choice.")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
