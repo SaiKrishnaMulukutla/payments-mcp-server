@@ -2,7 +2,7 @@
 
 Tools are thin: resolve the per-request principal, then delegate to the PaymentGateway
 (``operations.py``) and MandateAuthority (``mandate.py``). Over stdio (dev) the principal is the
-demo principal; over authenticated HTTP it comes from the verified bearer token.
+demo principal; over authenticated HTTP it comes from the verified bearer token. 
 """
 
 from __future__ import annotations
