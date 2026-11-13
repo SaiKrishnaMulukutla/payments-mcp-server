@@ -64,8 +64,13 @@ CREATE TABLE payment_approvals (
     expires_at TIMESTAMPTZ NOT NULL,
     approved_at TIMESTAMPTZ NOT NULL,
     consumed_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE UNIQUE INDEX idx_one_unconsumed_approval_per_intent
+    ON payment_approvals (payment_intent_id)
+    WHERE consumed_at IS NULL AND revoked_at IS NULL;
 
 CREATE TABLE payment_attempts (
     id UUID PRIMARY KEY,
