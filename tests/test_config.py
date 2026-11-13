@@ -1,5 +1,5 @@
-from cryptography.fernet import Fernet
 import pytest
+from cryptography.fernet import Fernet
 from pydantic import ValidationError
 
 from payments_mcp.config import Settings
