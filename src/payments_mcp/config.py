@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_url: SecretStr
     account_encryption_key: SecretStr
     approval_signing_secret: SecretStr = Field(min_length=32)
+    account_fingerprint_secret: SecretStr = Field(min_length=32)
     cashfree_client_id: SecretStr | None = None
     cashfree_client_secret: SecretStr | None = None
     cashfree_environment: str = "sandbox"
