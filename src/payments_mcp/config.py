@@ -34,4 +34,4 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """Load settings lazily so importing domain modules needs no environment secrets."""
-    return Settings()
+    return Settings()  # type: ignore[call-arg]  # Values are loaded from environment / .env.
