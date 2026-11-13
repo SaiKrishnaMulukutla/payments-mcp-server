@@ -7,7 +7,7 @@ to immutable payment facts; PostgreSQL must still enforce expiry and single-use 
 import hashlib
 import hmac
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -35,7 +35,7 @@ class ApprovalSigner:
             "snapshot_hash": snapshot_hash,
             "amount_paise": amount_paise,
             "fee_paise": fee_paise,
-            "expires_at": expires_at.astimezone(timezone.utc).isoformat(),
+            "expires_at": expires_at.astimezone(UTC).isoformat(),
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
@@ -73,7 +73,7 @@ class ApprovalSigner:
         expires_at: datetime,
         now: datetime | None = None,
     ) -> bool:
-        current_time = now or datetime.now(timezone.utc)
+        current_time = now or datetime.now(UTC)
         if expires_at.tzinfo is None or current_time.tzinfo is None:
             return False
         if expires_at <= current_time:
