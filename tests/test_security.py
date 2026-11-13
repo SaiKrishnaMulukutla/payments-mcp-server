@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from cryptography.fernet import Fernet
 
@@ -19,13 +19,19 @@ def test_fingerprint_is_stable_and_biller_scoped() -> None:
     fingerprinter = AccountFingerprinter("f" * 48)
     params = b'{"consumer_number":"123456"}'
     first = fingerprinter.fingerprint(biller_id="biller-a", normalized_customer_params=params)
-    assert first == fingerprinter.fingerprint(biller_id="biller-a", normalized_customer_params=params)
-    assert first != fingerprinter.fingerprint(biller_id="biller-b", normalized_customer_params=params)
+    assert first == fingerprinter.fingerprint(
+        biller_id="biller-a",
+        normalized_customer_params=params,
+    )
+    assert first != fingerprinter.fingerprint(
+        biller_id="biller-b",
+        normalized_customer_params=params,
+    )
 
 
 def test_approval_signature_binds_exact_payment_and_expiry() -> None:
     signer = ApprovalSigner("x" * 48)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     expires = now + timedelta(minutes=5)
     fields = {
         "intent_id": "intent-1",
