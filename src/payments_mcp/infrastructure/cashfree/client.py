@@ -8,7 +8,14 @@ import httpx
 
 
 class CashfreeClient:
-    def __init__(self, *, base_url: str, client_id: str, client_secret: str, timeout_seconds: float = 15.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        client_id: str,
+        client_secret: str,
+        timeout_seconds: float = 15.0,
+    ) -> None:
         self._base_url = base_url.rstrip("/")
         self._client_id = client_id
         self._client_secret = client_secret
