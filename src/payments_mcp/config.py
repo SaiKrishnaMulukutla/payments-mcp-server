@@ -1,57 +1,37 @@
-"""Gateway configuration + the agent principal (capability scope)."""
+"""Validated runtime configuration. Secrets are required when constructing the app."""
 
-from __future__ import annotations
+from functools import lru_cache
 
-from pydantic import BaseModel, Field
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Env-driven config. Prefix PAYMENTS_ (e.g. PAYMENTS_BACKEND=http)."""
+    model_config = SettingsConfigDict(env_file=".env", env_prefix="", extra="ignore")
 
-    model_config = SettingsConfigDict(env_prefix="PAYMENTS_", env_file=".env", extra="ignore")
+    database_url: SecretStr
+    account_encryption_key: SecretStr
+    approval_signing_secret: SecretStr = Field(min_length=32)
+    cashfree_client_id: SecretStr | None = None
+    cashfree_client_secret: SecretStr | None = None
+    cashfree_environment: str = "sandbox"
+    max_bill_amount_paise: int = Field(default=1_000_000, gt=0)
+    approval_ttl_seconds: int = Field(default=300, ge=30, le=900)
+    database_pool_min_size: int = Field(default=1, ge=1)
+    database_pool_max_size: int = Field(default=5, ge=1)
 
-    backend: str = "demo"  # "demo" | "http"
-    base_url: str = "http://localhost:8080"
-    token: str | None = None  # bearer for the backend; NEVER exposed to the model
-    request_timeout_s: float = 10.0
-    merchant_id: str = "mcp-agent"  # gateway-owned; not agent-controlled
-    redis_url: str | None = None  # H2 shared op store + lock; unset => in-memory fallback
-    auth_secret: str | None = None  # H3 bearer-token verification; unset => stdio/demo, no auth
-    auth_issuer: str | None = None
-    auth_audience: str | None = None
-    mandate_secret: str | None = None  # H4 payment-mandate verification; unset => mandates disabled
-    mandate_issuer: str | None = None
-    approval_database_url: str | None = None  # required whenever the approval service is enabled
-    approval_ttl_seconds: int = 900
-    transport: str = "stdio"  # stdio | streamable-http
-    host: str = "127.0.0.1"
-    port: int = 8000
-    auth_resource_url: str | None = None  # this server's URL (RFC 8707 resource indicator)
-
-
-class AgentPrincipal(BaseModel):
-    """Who the agent is allowed to be. Least-privilege: scopes + account allow-list + ceiling."""
-
-    principal_id: str = "demo-agent"
-    tenant_id: str = "demo-tenant"
-    allowed_accounts: list[str] = Field(default_factory=list)  # empty => unrestricted (dev only)
-    scopes: list[str] = Field(default_factory=lambda: ["payments:read"])
-    max_payment_amount_minor: int = 10_000  # autonomous ceiling (₹100 demo)
-
-    def has_scope(self, scope: str) -> bool:
-        return scope in self.scopes
-
-    def allows_account(self, account_id: str) -> bool:
-        return not self.allowed_accounts or account_id in self.allowed_accounts
+    @model_validator(mode="after")
+    def validate_pool(self) -> "Settings":
+        if self.database_pool_min_size > self.database_pool_max_size:
+            raise ValueError("DATABASE_POOL_MIN_SIZE cannot exceed DATABASE_POOL_MAX_SIZE")
+        if self.cashfree_environment not in {"sandbox", "production"}:
+            raise ValueError("CASHFREE_ENVIRONMENT must be sandbox or production")
+        if (self.cashfree_client_id is None) != (self.cashfree_client_secret is None):
+            raise ValueError("Cashfree client ID and secret must be configured together")
+        return self
 
 
-def demo_principal() -> AgentPrincipal:
-    """A deliberately-scoped principal for the demo: reads + small payments on A/B, no refunds/admin."""
-    return AgentPrincipal(
-        principal_id="demo-agent",
-        tenant_id="demo-tenant",
-        allowed_accounts=["acct-A", "acct-B"],
-        scopes=["payments:read", "payments:create"],
-        max_payment_amount_minor=10_000,
-    )
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Load settings lazily so importing domain modules needs no environment secrets."""
+    return Settings()

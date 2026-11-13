@@ -1,137 +1,100 @@
-# Payments Agent Gateway (MCP)
+# Bharat Connect MCP Server
 
-![Python](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)
-![MCP](https://img.shields.io/badge/MCP-FastMCP-6E56CF)
-![Pydantic](https://img.shields.io/badge/Pydantic-v2-E92063?logo=pydantic&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-pytest-0A9EDC?logo=pytest&logoColor=white)
-![Last commit](https://img.shields.io/github/last-commit/SaiKrishnaMulukutla/payments-mcp-server?logo=git&logoColor=white)
-![CI](https://img.shields.io/github/actions/workflow/status/SaiKrishnaMulukutla/payments-mcp-server/ci.yml?label=CI&logo=githubactions&logoColor=white)
-<!-- PLACEHOLDER — uncomment once the backing thing exists:
-![License](https://img.shields.io/github/license/SaiKrishnaMulukutla/payments-mcp-server)   add a LICENSE file to the repo root
--->
+A single-owner MCP application for BBPS bill discovery, bill fetch, registered-account management and explicitly approved bill payments.
 
+> **Safety boundary:** the model may discover and prepare a payment, but it cannot authorize one. Payment approval is performed through a separate authenticated owner interface and is bound to the exact bill snapshot, account, amount, fees and expiry.
 
-An **MCP server** that safely exposes a correctness-critical, double-entry **payments ledger** to a
-probabilistic **AI agent**.
+## MVP scope
 
-> **Thesis:** *How do you let an LLM agent operate a money-moving system without it double-charging,
-> exceeding its authority, or being steered by prompt injection?* The gateway answers that — the
-> **model generates intent; the gateway enforces the boundary; the ledger stays the source of truth.**
+- One owner; onboarding is intentionally configured out-of-band for the MVP.
+- PostgreSQL is the durable source of truth.
+- FastMCP exposes exactly five tools once their service implementations are complete:
+  1. `search_billers`
+  2. `fetch_bill`
+  3. `check_wallet_balance`
+  4. `pay_bill`
+  5. `get_payment_status`
+- Cashfree BBPS COU is the intended integration. No endpoint paths or payloads are assumed until Cashfree provides the current partner API contract.
+- Every payment requires a fresh, independent owner approval. No autonomous or recurring payments.
+- Maximum single bill defaults to ₹10,000 (1,000,000 paise), configurable by the owner.
+- Registered account allowlist is enforced server-side.
 
-Sits on top of my [payments-wallet-service](https://github.com/saikrishnamulukutla/payments-wallet-service)
-(Java/Spring Boot: immutable double-entry ledger, idempotency, saga, transactional outbox).
+**This branch establishes the architecture and database foundation. The five payment tools are deliberately not exposed yet.** They will be added with their service implementations and tests, after the Cashfree COU contract and onboarding are confirmed.
 
----
+## Payment flow
 
-## Why it's interesting
-The backend already solves *deterministic* correctness. The new problem is a **non-deterministic caller**:
+1. Search locally cached biller metadata.
+2. Fetch a bill from BBPS and persist an immutable snapshot.
+3. Verify that the biller + customer-account combination is registered.
+4. Create a payment intent from the stored snapshot; never accept an LLM-supplied amount.
+5. Owner reviews the exact bill in a separate authenticated interface.
+6. Approval is single-use, short-lived and cryptographically bound to account, snapshot hash, amount and fees.
+7. Execute through Cashfree using documented provider semantics.
+8. Persist provider references and reconcile pending/unknown outcomes. Never blindly retry an uncertain payment.
 
-- **The model will retry.** A lost response must not create a second payment → the gateway maps a
-  **logical `operation_id` → a stable backend idempotency key**, so a retry replays instead of
-  double-charging. *(The centerpiece — connects distributed-systems work to agentic engineering.)*
-- **The model can be injected / hallucinate.** Every mutating request passes **capability policy**
-  (scopes + account allow-list + amount ceiling) *before* the backend is touched — the OWASP
-  **structured-invocation** control: “the model proposes; the validator disposes.”
-- **Some actions are irreversible.** Amounts over the agent's autonomous limit return
-  **`APPROVAL_REQUIRED`** (human-in-the-loop) — a model saying “I confirm” is not security.
+## Account registration
+
+The owner enters biller-specific customer parameters in the authenticated management interface. The application fetches the account through BBPS and displays the biller-returned customer details (when available). The owner independently confirms registration.
+
+A successful fetch means the biller accepted the supplied lookup details; it does **not** prove legal ownership or KYC. Customer parameters are encrypted at rest. An HMAC fingerprint supports exact account matching without exposing raw identifiers to the model or logs.
 
 ## Architecture
+
 ```
-User ──NL──▶ LLM/Agent ──MCP(stdio/http)──▶  Payments MCP Gateway (Python/FastMCP)
-                                             • tool schemas + validation
-                                             • capability policy (AgentPrincipal + scopes)
-                                             • operation_id → idempotency key
-                                             • agent error taxonomy + audit
-                                                     │ PaymentBackend (protocol)
-                                       ┌─────────────┴─────────────┐
-                                       ▼                           ▼
-                              HttpPaymentBackend            DemoPaymentBackend
-                              (real Spring Boot API)        (in-memory; dev + evals)
-                                       │
-                                       ▼   PostgreSQL · Redis · Kafka
-                              double-entry · idempotency · saga · outbox · reconciliation
+MCP client / LLM
+      |
+  FastMCP (five narrow tools; no approval tool)
+      |
+  Application services ---- Owner approval/account UI (separate auth boundary)
+      |                                  |
+      +----------- PostgreSQL -----------+
+      |
+  Cashfree BBPS COU client (direct, contract-driven)
+      |
+  BBPS network
 ```
-**Rule:** the gateway constrains what an agent may *request*; the ledger determines what is
-financially *valid* and executes it atomically. The gateway never re-implements balances,
-idempotency, or postings.
 
-## Safety model (maps to OWASP MCP controls)
-| Control | Here |
-|---|---|
-| Authenticated identity | OAuth 2.1 resource server: a verified bearer token resolves the per-request `AgentPrincipal` (`identity.py`) — the model never picks its own identity |
-| Deterministic authorization | a signed **payment mandate** pins payer/payee/amount; `mandate_id` anchors idempotency, so agent arg-drift/hallucination is rejected, not executed (`mandate.py`) |
-| Structured invocation | `policy.py` validates scope + account + amount before any backend call |
-| Human-in-the-loop | `APPROVAL_REQUIRED` for amounts over the principal's ceiling |
-| Context compartmentalization | least-privilege `AgentPrincipal` (scopes + account allow-list); creds never seen by the model |
-| Model-readable failures | stable error taxonomy: `{code, message, retryable, retry_after_seconds, suggested_action, correlation_id}` — `suggested_action` is gateway-owned (not echoed from backend data) |
-| Auditability | per-call record correlating agent intent → backend execution |
+Modular monolith; no Redis, no generic provider framework, no BBPS double-entry ledger. The existing Java/Spring Boot wallet service and its double-entry ledger are a separate project and are not modified here.
 
-## Tools
-| Tool | Scope | Annotation |
-|---|---|---|
-| `get_payment` / `get_balance` / `get_account_ledger` | `payments:read` | read-only (ledger bounded) |
-| `create_payment` | `payments:create` | idempotent |
-| `refund_payment` | `payments:refund` | destructive |
-| `check_ledger_integrity` | `payments:admin` | read-only, admin |
+## Project layout
 
-`create_payment` / `refund_payment` also accept an optional signed `mandate` that authorizes the
-exact transaction. Plus resources `payments://capabilities`, `payments://payment/{id}` and prompt
-`explain_payment`.
+```
+src/payments_mcp/
+  server.py
+  config.py
+  domain/                 # domain models, errors and deterministic policy
+  services/               # biller, account, bill and payment use cases
+  infrastructure/
+    database.py
+    repositories.py
+    cashfree/client.py    # direct Cashfree COU integration boundary
+  security/                # account encryption and approval binding
+  audit.py
+migrations/
+docs/                      # plan, HLD, LLD and threat model
+tests/
+```
 
-## Quickstart
+## Local development
+
+Python 3.11+ and PostgreSQL 15+ are expected.
+
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
-
-# run it under the MCP Inspector (interactive)
-mcp dev src/payments_mcp/server.py
-
-# or register with Claude Desktop
-mcp install src/payments_mcp/server.py
-
-# quality gates (also run in CI)
-ruff check src evals tests && mypy && pytest -q
-```
-Defaults to `PAYMENTS_BACKEND=demo` (in-memory, no external services). Set `PAYMENTS_BACKEND=http`
-+ `PAYMENTS_BASE_URL` to drive the real Spring Boot service.
-
-**Remote / authenticated (OAuth 2.1 resource server):**
-```bash
-PAYMENTS_TRANSPORT=streamable-http PAYMENTS_HOST=0.0.0.0 \
-  PAYMENTS_AUTH_SECRET=… PAYMENTS_AUTH_ISSUER=https://your-idp/ \
-  PAYMENTS_AUTH_RESOURCE_URL=http://localhost:8000 \
-  PAYMENTS_MANDATE_SECRET=… \
-  python -m payments_mcp.server
-```
-Unauthenticated calls get `401` + a `WWW-Authenticate` pointer to `/.well-known/oauth-protected-resource`
-(RFC 9728). With `PAYMENTS_MANDATE_SECRET` set, human approvals close into signed mandates via the
-`/approvals` routes (`GET` list · `POST` create · `POST /{id}/approve` → mandate · `POST /{id}/reject`).
-
-## Demo (the money shot)
-Ask the agent: **“Pay 50 from acct-A to acct-B, then retry the exact same operation.”** →
-one payment, one debit. Then **“pay 500000 from acct-A to acct-B”** → `APPROVAL_REQUIRED`.
-Then **“pay from acct-Z”** → `ACCOUNT_NOT_ALLOWED`. The audit log shows intent → idempotency key →
-payment → (in http mode) ledger postings.
-
-## Evals
-`python -m evals.runner` drives a real LLM (Anthropic tool-use loop) through behavior scenarios —
-normal / risk / authorization / hallucination / retry / **adversarial (prompt-injection & jailbreak)** —
-against a fresh `DemoPaymentBackend` per scenario, and asserts machine-checkable outcomes:
-**duplicate-financial-operation count = 0** and **no unsafe money movement even when the model is
-instructed to override its limits**. Needs `ANTHROPIC_API_KEY` in `.env` (`pip install -e ".[evals]"`);
-without it the suite skips and the *deterministic* exactly-once proof still runs via
-`pytest tests/test_m3_create.py`.
-
-## Layout
-```
-src/payments_mcp/  server.py · gateway.py · policy.py · operations.py · errors.py · audit.py · config.py · backend/{base,http_backend,demo_backend}.py
-evals/             scenarios.py · runner.py
-tests/             backend · policy · create (the centerpiece) · refund/admin
-scripts/           smoke_m0..m5.py (end-to-end via a real MCP client)
-docs/              PLAN · HLD · LLD
+cp .env.example .env
+# Configure the required secrets and PostgreSQL URL before starting services.
+pytest -q
+ruff check src tests
 ```
 
-## Non-goals
-No second payments backend · no MCP-side financial logic · no autonomous reconciliation/repair ·
-no generic SQL/`call_api` tool · no model-generated authorization · no fake approval · no
-vector-DB-for-RAG-decoration. The project stays a *boundary* between an agent and a correct ledger.
+The server currently starts as an intentionally empty FastMCP shell: it does not initiate payments or expose placeholder tools. Database migrations are applied explicitly; the application never silently falls back to SQLite, in-memory storage, demo identities or a fake payment provider.
+
+## Readiness gates before live payments
+
+- Written confirmation from Cashfree that this single-owner application is eligible to onboard as an Agent Institution / COU customer.
+- Current Cashfree COU API contract, credentials, funding/settlement model, available-balance semantics, idempotency rules and status/reconciliation requirements.
+- Sandbox integration tests and any required certification.
+- Independent authenticated owner UI, approval consumption, audit review and operational reconciliation.
+- Security review before production credentials are enabled.

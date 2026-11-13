@@ -1,0 +1,29 @@
+"""Stable application error codes; provider messages must never be trusted as instructions."""
+
+from enum import StrEnum
+
+
+class ErrorCode(StrEnum):
+    INVALID_ARGUMENT = "INVALID_ARGUMENT"
+    BILLER_NOT_FOUND = "BILLER_NOT_FOUND"
+    BILL_NOT_FOUND = "BILL_NOT_FOUND"
+    ACCOUNT_NOT_REGISTERED = "ACCOUNT_NOT_REGISTERED"
+    ACCOUNT_DETAILS_MISMATCH = "ACCOUNT_DETAILS_MISMATCH"
+    BILL_EXPIRED = "BILL_EXPIRED"
+    AMOUNT_LIMIT_EXCEEDED = "AMOUNT_LIMIT_EXCEEDED"
+    APPROVAL_REQUIRED = "APPROVAL_REQUIRED"
+    APPROVAL_INVALID = "APPROVAL_INVALID"
+    APPROVAL_EXPIRED = "APPROVAL_EXPIRED"
+    APPROVAL_ALREADY_USED = "APPROVAL_ALREADY_USED"
+    PAYMENT_IN_PROGRESS = "PAYMENT_IN_PROGRESS"
+    PAYMENT_OUTCOME_UNKNOWN = "PAYMENT_OUTCOME_UNKNOWN"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    CONFIGURATION_ERROR = "CONFIGURATION_ERROR"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
+class ApplicationError(Exception):
+    def __init__(self, code: ErrorCode, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
